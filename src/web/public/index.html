@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shinkansen RSS Translator</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🚄 Shinkansen RSS Translator</h1>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="feeds" role="tab">Feeds</button>
+      <button class="tab" data-tab="settings" role="tab">設定</button>
+      <button class="tab" data-tab="usage" role="tab">用量</button>
+      <button class="tab" data-tab="logs" role="tab">紀錄</button>
+    </nav>
+
+    <!-- ═══ Feeds ═══ -->
+    <section id="tab-feeds" class="panel active">
+      <form id="add-feed" class="card add-form">
+        <div class="row">
+          <label class="grow">來源 RSS 網址
+            <div class="url-row">
+              <input type="text" name="source_url" placeholder="https://example.com/feed.xml" required>
+              <button type="button" id="test-feed" class="ghost">測試</button>
+            </div>
+          </label>
+        </div>
+        <div class="row">
+          <label>標題（選填）<input type="text" name="title" placeholder="自動抓取"></label>
+          <label>分類<input type="text" name="category" placeholder="已翻譯"></label>
+        </div>
+        <div class="row">
+          <label>引擎
+            <select name="engine">
+              <option value="">繼承全域預設</option>
+            </select>
+          </label>
+          <label>Gemini 模型
+            <select name="model">
+              <option value="">繼承全域預設</option>
+            </select>
+          </label>
+          <label class="checkbox-label inline">
+            <input type="checkbox" name="fetch_article">
+            <span>抓取全文<small>RSS 只有摘要時開啟</small></span>
+          </label>
+          <button type="submit" class="primary">新增 Feed</button>
+        </div>
+      </form>
+
+      <div class="opml-bar">
+        <span class="opml-label">批次:</span>
+        <button type="button" id="import-opml" class="ghost">匯入 OPML</button>
+        <button type="button" id="export-opml" class="ghost">匯出 OPML</button>
+        <input type="file" id="opml-file" accept=".opml,.xml,text/xml" hidden>
+      </div>
+
+      <div id="feed-list"></div>
+    </section>
+
+    <!-- ═══ 設定 ═══ -->
+    <section id="tab-settings" class="panel">
+      <div class="card">
+        <div class="setting-row">
+          <span class="setting-label">Gemini API 金鑰</span>
+          <span id="apikey-status" class="pill">檢查中…</span>
+        </div>
+        <div class="api-key-row">
+          <input type="password" id="s-apikey" placeholder="AQ.… 或 AIza…（留空 = 不變更）" autocomplete="off">
+          <button type="button" id="test-key" class="ghost">測試</button>
+        </div>
+        <p class="hint">金鑰只存在伺服器本機的 SQLite，不會外洩到瀏覽器。也可改放伺服器 <code>.env</code> 的 <code>GEMINI_API_KEY</code>。用 Google 翻譯引擎則不需金鑰。</p>
+      </div>
+
+      <div class="card">
+        <div class="grid2">
+          <label>預設引擎
+            <select id="s-engine"></select>
+          </label>
+          <label>預設 Gemini 模型
+            <select id="s-model"></select>
+          </label>
+          <label>每批段數上限
+            <input type="number" id="s-units" min="1" max="100">
+          </label>
+          <label>每批字元上限
+            <input type="number" id="s-chars" min="500" max="20000" step="100">
+          </label>
+          <label>Gemini Temperature
+            <input type="number" id="s-temp" min="0" max="2" step="0.1">
+          </label>
+          <label>紀錄保留天數
+            <input type="number" id="s-logdays" min="1" max="365">
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>模型計價<small class="hint-inline">每 1M tokens 的美金價;空白 = 用內建價</small></h3>
+        <div id="pricing-rows"></div>
+      </div>
+
+      <div class="card">
+        <label>系統 prompt
+          <textarea id="s-prompt" rows="8"></textarea>
+        </label>
+      </div>
+
+      <div class="card">
+        <label>禁用詞黑名單<small class="hint-inline">每行一組 <code>中國用語=台灣用語</code>，譯文一律不用左欄</small>
+          <textarea id="s-forbidden" rows="8" spellcheck="false"></textarea>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="save-settings" class="primary">儲存設定</button>
+        <button id="export-settings" class="ghost">匯出設定</button>
+        <span id="save-status" class="save-status"></span>
+      </div>
+    </section>
+
+    <!-- ═══ 用量 ═══ -->
+    <section id="tab-usage" class="panel">
+      <div class="usage-toolbar">
+        <div class="range-tabs" id="range-tabs">
+          <button data-days="1" class="range">今日</button>
+          <button data-days="7" class="range active">7 天</button>
+          <button data-days="30" class="range">30 天</button>
+          <button data-days="0" class="range">全部</button>
+        </div>
+        <div class="toolbar-actions">
+          <button id="export-csv" class="ghost">匯出 CSV</button>
+          <button id="clear-usage" class="danger">清除</button>
+        </div>
+      </div>
+
+      <div class="stat-grid stat-grid-5">
+        <div class="stat"><span class="stat-num" id="u-cost">–</span><span class="stat-label">費用（USD）</span></div>
+        <div class="stat"><span class="stat-num" id="u-calls">–</span><span class="stat-label">翻譯呼叫</span></div>
+        <div class="stat"><span class="stat-num" id="u-in">–</span><span class="stat-label">輸入 tokens</span></div>
+        <div class="stat"><span class="stat-num" id="u-out">–</span><span class="stat-label">輸出 tokens</span></div>
+        <div class="stat"><span class="stat-num" id="u-cache">–</span><span class="stat-label">快取命中率</span></div>
+      </div>
+
+      <div class="card">
+        <h3>每日費用</h3>
+        <div id="u-chart" class="chart"></div>
+      </div>
+
+      <div class="card">
+        <h3>各 feed 用量</h3>
+        <table id="u-byfeed"><thead><tr><th>Feed</th><th>翻譯篇數</th><th>輸入</th><th>輸出</th><th>快取</th><th>費用</th></tr></thead><tbody></tbody></table>
+      </div>
+
+      <div class="card">
+        <h3>明細（最近 100 筆）</h3>
+        <div class="table-scroll">
+          <table id="u-records"><thead><tr><th>時間</th><th>Feed</th><th>模型</th><th>輸入</th><th>輸出</th><th>費用</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <p class="hint" id="u-pending-note"></p>
+    </section>
+
+    <!-- ═══ 紀錄 ═══ -->
+    <section id="tab-logs" class="panel">
+      <div class="usage-toolbar">
+        <div class="log-filters">
+          <select id="log-level"><option value="">所有等級</option></select>
+          <select id="log-category"><option value="">所有類別</option></select>
+        </div>
+        <div class="toolbar-actions">
+          <button id="export-logs" class="ghost">匯出 CSV</button>
+          <button id="clear-logs" class="danger">清除</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="table-scroll">
+          <table id="log-table"><thead><tr><th>時間</th><th>等級</th><th>類別</th><th>訊息</th><th>Feed</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

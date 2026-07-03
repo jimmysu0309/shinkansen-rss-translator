@@ -1,0 +1,20 @@
+node_modules/
+*.log
+.DS_Store
+
+# 執行期資料
+data/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# 環境變數(含 API key)
+.env
+.env.local
+
+# 測試產物
+coverage/
+test-results/
+
+# 個人協作指引,不進公開 repo
+CLAUDE.md

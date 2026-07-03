@@ -1,0 +1,3 @@
+[submodule "vendor/shinkansen"]
+	path = vendor/shinkansen
+	url = https://github.com/jimmysu0309/shinkansen.git

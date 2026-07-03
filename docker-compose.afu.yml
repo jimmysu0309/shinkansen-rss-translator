@@ -1,0 +1,15 @@
+# afu 專用疊加層:把容器併入 Miniflux 的 Docker 網路,
+# 讓 Miniflux 容器能用內部 DNS 名 http://shinkansen-rss:8088/rss/<id> 抓取譯後 feed。
+#
+# 用法:docker compose -f docker-compose.yml -f docker-compose.afu.yml up -d --build
+name: shinkansen-rss-translator
+
+services:
+  app:
+    networks:
+      - miniflux
+
+networks:
+  miniflux:
+    name: miniflux_default
+    external: true

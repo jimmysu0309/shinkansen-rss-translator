@@ -1,0 +1,243 @@
+// SQLite DAO 測試(離線,用 :memory: 隔離)。
+//
+// 訊號層次:
+//   ✓ settings kv round-trip(含 JSON 物件值)
+//   ✓ feeds CRUD + 部分更新白名單 + fetch meta
+//   ✓ entries 依 (feed_id, guid) 去重 —— 防重複翻譯的核心
+//   ✓ entries 狀態流轉(pending → done / error)
+//   ✓ usage 記錄與統計加總
+//   ✗ 不驗:真實檔案持久化(WAL/併發);那在部署階段驗
+import { describe, it, expect, beforeEach } from 'vitest';
+import { createDb } from '../src/db/index.js';
+
+let ctx;
+beforeEach(() => { ctx = createDb(':memory:'); });
+
+describe('settings DAO', () => {
+  it('set/get round-trip,支援物件值', () => {
+    ctx.settings.set('model', 'gemini-3.1-flash-lite');
+    ctx.settings.set('forbidden', [{ forbidden: '視頻', replacement: '影片' }]);
+    expect(ctx.settings.get('model')).toBe('gemini-3.1-flash-lite');
+    expect(ctx.settings.get('forbidden')).toEqual([{ forbidden: '視頻', replacement: '影片' }]);
+  });
+  it('不存在回 fallback;remove 生效', () => {
+    expect(ctx.settings.get('nope', 'def')).toBe('def');
+    ctx.settings.set('k', 1);
+    ctx.settings.remove('k');
+    expect(ctx.settings.get('k', null)).toBe(null);
+  });
+  it('set 同鍵是覆寫(upsert)', () => {
+    ctx.settings.set('k', 'a');
+    ctx.settings.set('k', 'b');
+    expect(ctx.settings.get('k')).toBe('b');
+    expect(ctx.settings.all()).toEqual({ k: 'b' });
+  });
+});
+
+describe('feeds DAO', () => {
+  it('create 帶預設值;getByUrl 找得到', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed', title: 'Ex' }, 1000);
+    expect(f.id).toBeGreaterThan(0);
+    expect(f.enabled).toBe(1);
+    expect(f.engine).toBe('gemini');
+    expect(f.fetch_article).toBe(0);
+    expect(f.created_at).toBe(1000);
+    expect(ctx.feeds.getByUrl('https://ex.com/feed').id).toBe(f.id);
+  });
+
+  it('source_url 唯一,重複 create 丟錯', () => {
+    ctx.feeds.create({ source_url: 'https://dup.com/feed' });
+    expect(() => ctx.feeds.create({ source_url: 'https://dup.com/feed' })).toThrow();
+  });
+
+  it('update 只改白名單欄位,布林正規化', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
+    const u = ctx.feeds.update(f.id, { fetch_article: true, model: 'gemini-3-flash-preview', enabled: false });
+    expect(u.fetch_article).toBe(1);
+    expect(u.model).toBe('gemini-3-flash-preview');
+    expect(u.enabled).toBe(0);
+  });
+
+  it('list enabledOnly 過濾停用 feed', () => {
+    const a = ctx.feeds.create({ source_url: 'https://a.com/feed' });
+    ctx.feeds.create({ source_url: 'https://b.com/feed' });
+    ctx.feeds.update(a.id, { enabled: false });
+    expect(ctx.feeds.list().length).toBe(2);
+    expect(ctx.feeds.list({ enabledOnly: true }).length).toBe(1);
+  });
+
+  it('setFetchMeta 更新 etag / 錯誤', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
+    const u = ctx.feeds.setFetchMeta(f.id, { etag: 'W/"abc"', checkedAt: 5000 });
+    expect(u.etag).toBe('W/"abc"');
+    expect(u.last_checked_at).toBe(5000);
+  });
+
+  it('remove 刪除 feed 並連帶刪 entries(CASCADE)', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
+    ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1' });
+    expect(ctx.feeds.remove(f.id)).toBe(true);
+    expect(ctx.entries.listByFeed(f.id)).toEqual([]);
+  });
+});
+
+describe('entries DAO — 去重是核心', () => {
+  let feedId;
+  beforeEach(() => { feedId = ctx.feeds.create({ source_url: 'https://ex.com/feed' }).id; });
+
+  it('相同 (feed_id, guid) 第二次 upsert 不重複插入', () => {
+    const r1 = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1', title: 'A' });
+    const r2 = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1', title: 'A(again)' });
+    expect(r1.inserted).toBe(true);
+    expect(r2.inserted).toBe(false);          // 去重:沒插入
+    expect(ctx.entries.listByFeed(feedId).length).toBe(1);
+    expect(ctx.entries.getByGuid(feedId, 'g1').title).toBe('A'); // 保留原本,不覆寫
+  });
+
+  it('不同 feed 的相同 guid 各自獨立', () => {
+    const feed2 = ctx.feeds.create({ source_url: 'https://ex2.com/feed' }).id;
+    expect(ctx.entries.upsertNew({ feed_id: feedId, guid: 'same' }).inserted).toBe(true);
+    expect(ctx.entries.upsertNew({ feed_id: feed2, guid: 'same' }).inserted).toBe(true);
+  });
+
+  it('狀態流轉:pending → done', () => {
+    const { entry } = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1' });
+    expect(entry.translation_status).toBe('pending');
+    const done = ctx.entries.markDone(entry.id, {
+      titleTranslated: '標題', contentTranslated: '<p>內文</p>',
+      tokensIn: 100, tokensOut: 20, translatedAt: 9000,
+    });
+    expect(done.translation_status).toBe('done');
+    expect(done.content_translated).toBe('<p>內文</p>');
+    expect(done.tokens_out).toBe(20);
+    expect(ctx.entries.pendingByFeed(feedId)).toEqual([]);
+  });
+
+  it('狀態流轉:pending → error', () => {
+    const { entry } = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1' });
+    const e = ctx.entries.markError(entry.id, new Error('boom'));
+    expect(e.translation_status).toBe('error');
+    expect(e.translation_error).toContain('boom');
+  });
+
+  it('countPending 跨 feed 計數', () => {
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1' });
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'g2' });
+    expect(ctx.entries.countPending()).toBe(2);
+  });
+});
+
+describe('usage DAO', () => {
+  it('log 後統計加總正確', () => {
+    ctx.usage.log({ ts: 1000, model: 'gemini-3.1-flash-lite', usage: { inputTokens: 100, outputTokens: 20, cachedTokens: 5 } });
+    ctx.usage.log({ ts: 2000, model: 'gemini-3.1-flash-lite', usage: { inputTokens: 200, outputTokens: 30 } });
+    const s = ctx.usage.getStats();
+    expect(s.calls).toBe(2);
+    expect(s.input_tokens).toBe(300);
+    expect(s.output_tokens).toBe(50);
+    expect(s.cached_tokens).toBe(5);
+  });
+
+  it('getStats 時間範圍過濾(半開區間 [from, to))', () => {
+    ctx.usage.log({ ts: 1000, usage: { inputTokens: 10, outputTokens: 1 } });
+    ctx.usage.log({ ts: 5000, usage: { inputTokens: 20, outputTokens: 2 } });
+    const s = ctx.usage.getStats({ from: 900, to: 2000 });
+    expect(s.calls).toBe(1);
+    expect(s.input_tokens).toBe(10);
+  });
+
+  it('getByModel 分組', () => {
+    ctx.usage.log({ ts: 1, model: 'lite', usage: { inputTokens: 10, outputTokens: 5 } });
+    ctx.usage.log({ ts: 2, model: 'flash', usage: { inputTokens: 20, outputTokens: 40 } });
+    const rows = ctx.usage.getByModel();
+    expect(rows[0].model).toBe('flash'); // 依 output_tokens 排序
+    expect(rows.find(r => r.model === 'lite').input_tokens).toBe(10);
+  });
+
+  it('getDaily 依日彙總', () => {
+    const day1 = Date.parse('2025-07-01T08:00:00');
+    const day2 = Date.parse('2025-07-02T08:00:00');
+    ctx.usage.log({ ts: day1, model: 'lite', usage: { inputTokens: 10, outputTokens: 5 } });
+    ctx.usage.log({ ts: day1 + 3600_000, model: 'lite', usage: { inputTokens: 20, outputTokens: 5 } });
+    ctx.usage.log({ ts: day2, model: 'lite', usage: { inputTokens: 100, outputTokens: 5 } });
+    const rows = ctx.usage.getDaily();
+    expect(rows.length).toBe(2);
+    expect(rows[0].day).toBe('2025-07-01');
+    expect(rows[0].calls).toBe(2);
+    expect(rows[0].input_tokens).toBe(30);
+    expect(rows[1].day).toBe('2025-07-02');
+  });
+
+  it('getRaw join feed / entry 標題(供 CSV)', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed', title: '來源A' });
+    const { entry } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1', title: '文章A' });
+    ctx.usage.log({ ts: 1000, feedId: f.id, entryId: entry.id, model: 'lite', usage: { inputTokens: 10, outputTokens: 5 } });
+    const rows = ctx.usage.getRaw();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].feed_title).toBe('來源A');
+    expect(rows[0].entry_title).toBe('文章A');
+  });
+
+  it('getRecords 回最近 N 筆(新到舊,含時間 + 模型)', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed', title: 'F' });
+    ctx.usage.log({ ts: 1000, feedId: f.id, model: 'lite', usage: { inputTokens: 10, outputTokens: 5 } });
+    ctx.usage.log({ ts: 3000, feedId: f.id, model: 'flash', usage: { inputTokens: 20, outputTokens: 8 } });
+    const recs = ctx.usage.getRecords({ limit: 10 });
+    expect(recs).toHaveLength(2);
+    expect(recs[0].ts).toBe(3000); // 新到舊
+    expect(recs[0].model).toBe('flash');
+    expect(recs[0].feed_title).toBe('F');
+  });
+});
+
+describe('logs DAO', () => {
+  it('append / query(新到舊)', () => {
+    ctx.logs.append({ ts: 1000, level: 'info', category: 'fetch', message: '抓取 A' });
+    ctx.logs.append({ ts: 2000, level: 'error', category: 'translate', message: '翻譯失敗 B' });
+    const all = ctx.logs.query();
+    expect(all).toHaveLength(2);
+    expect(all[0].message).toBe('翻譯失敗 B'); // 新到舊
+  });
+
+  it('依 level / category 過濾', () => {
+    ctx.logs.append({ ts: 1, level: 'info', category: 'fetch', message: 'a' });
+    ctx.logs.append({ ts: 2, level: 'error', category: 'fetch', message: 'b' });
+    ctx.logs.append({ ts: 3, level: 'error', category: 'translate', message: 'c' });
+    expect(ctx.logs.query({ level: 'error' })).toHaveLength(2);
+    expect(ctx.logs.query({ category: 'fetch' })).toHaveLength(2);
+    expect(ctx.logs.query({ level: 'error', category: 'fetch' })).toHaveLength(1);
+  });
+
+  it('detail 物件會序列化;join feed 標題', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed', title: '來源A' });
+    ctx.logs.append({ ts: 1, level: 'info', category: 'translate', message: 'x', feedId: f.id, detail: { tokens: 100 } });
+    const row = ctx.logs.query()[0];
+    expect(row.detail).toContain('tokens');
+    expect(row.feed_title).toBe('來源A');
+  });
+
+  it('pruneBefore 刪除舊 log', () => {
+    ctx.logs.append({ ts: 1000, level: 'info', message: '舊' });
+    ctx.logs.append({ ts: 5000, level: 'info', message: '新' });
+    const removed = ctx.logs.pruneBefore(3000);
+    expect(removed).toBe(1);
+    expect(ctx.logs.query()).toHaveLength(1);
+    expect(ctx.logs.query()[0].message).toBe('新');
+  });
+
+  it('clear 清空所有 log', () => {
+    ctx.logs.append({ ts: 1, level: 'info', message: 'a' });
+    ctx.logs.append({ ts: 2, level: 'info', message: 'b' });
+    expect(ctx.logs.clear()).toBe(2);
+    expect(ctx.logs.query()).toHaveLength(0);
+  });
+});
+
+describe('usage.clear', () => {
+  it('清空所有用量紀錄', () => {
+    ctx.usage.log({ ts: 1, model: 'lite', usage: { inputTokens: 10, outputTokens: 5 } });
+    ctx.usage.log({ ts: 2, model: 'lite', usage: { inputTokens: 20, outputTokens: 5 } });
+    expect(ctx.usage.clear()).toBe(2);
+    expect(ctx.usage.getStats().calls).toBe(0);
+  });
+});

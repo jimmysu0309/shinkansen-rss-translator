@@ -1,0 +1,18 @@
+# Shinkansen RSS Translator — 獨立部署用 compose。
+# afu 上要併入 Miniflux 網路時,疊加 docker-compose.afu.yml(見 README)。
+name: shinkansen-rss-translator
+
+services:
+  app:
+    build: .
+    image: shinkansen-rss-translator
+    container_name: shinkansen-rss
+    restart: unless-stopped
+    # 只綁 127.0.0.1(對外靠 Tailscale Serve,不直接暴露)
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8448}:8088"
+    env_file: .env
+    environment:
+      - DB_PATH=/app/data/shinkansen-feed.sqlite
+    volumes:
+      - ./data:/app/data

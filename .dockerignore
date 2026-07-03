@@ -1,0 +1,11 @@
+node_modules
+data
+.git
+.env
+*.log
+coverage
+test-results
+.playwright-mcp
+# vendor 的 submodule 只需要 lib/,但 COPY 整包較單純;排除其龐大無關內容
+vendor/shinkansen/node_modules
+vendor/shinkansen/.git

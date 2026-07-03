@@ -1,0 +1,75 @@
+// fetch-feed.js — 抓取並解析 RSS/Atom feed,支援 conditional GET(etag / last-modified)。
+//
+// parseFeedXml(xml) 是純函式(可離線測);fetchFeed(url, opts) 加上網路與 304 處理。
+//
+// 訊號層次:
+//   ✓ parseFeedXml:把各種 feed 格式正規化成統一 item 形狀(guid/title/url/contentHtml/published_at)
+//   ✓ fetchFeed:304 Not Modified → 不重抓;回傳新的 etag/last-modified
+//   ✗ 不驗:真實網路(整合/部署階段驗);單元測試用注入的 fetch
+
+import Parser from 'rss-parser';
+
+const parser = new Parser({
+  // 讓 content:encoded(全文)可取用
+  customFields: { item: [['content:encoded', 'contentEncoded']] },
+});
+
+function pickContentHtml(item) {
+  // 優先全文,退而求其次摘要
+  return item.contentEncoded || item['content:encoded'] || item.content || item.summary || item.contentSnippet || '';
+}
+
+function toEpoch(item) {
+  const s = item.isoDate || item.pubDate;
+  if (!s) return null;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : t;
+}
+
+function normalizeItem(item) {
+  return {
+    guid: item.guid || item.id || item.link || null,
+    title: item.title || '',
+    url: item.link || null,
+    contentHtml: pickContentHtml(item),
+    published_at: toEpoch(item),
+  };
+}
+
+/** 純函式:解析 feed XML 字串 → { title, items[] } */
+export async function parseFeedXml(xml) {
+  const feed = await parser.parseString(xml);
+  return {
+    title: feed.title || '',
+    items: (feed.items || []).map(normalizeItem),
+  };
+}
+
+/**
+ * 抓取 feed,支援 conditional GET。
+ * @param {string} url
+ * @param {{etag?, lastModified?, fetchImpl?}} [opts] fetchImpl 供測試注入
+ * @returns {Promise<{notModified:boolean, title?, items, etag, lastModified}>}
+ */
+export async function fetchFeed(url, opts = {}) {
+  const doFetch = opts.fetchImpl || fetch;
+  const headers = { 'user-agent': 'Shinkansen-Feed/0.1 (+RSS translator)' };
+  if (opts.etag) headers['if-none-match'] = opts.etag;
+  if (opts.lastModified) headers['if-modified-since'] = opts.lastModified;
+
+  const resp = await doFetch(url, { headers });
+  if (resp.status === 304) {
+    return { notModified: true, items: [], etag: opts.etag || null, lastModified: opts.lastModified || null };
+  }
+  if (!resp.ok) throw new Error(`抓取 ${url} 失敗:HTTP ${resp.status}`);
+
+  const xml = await resp.text();
+  const { title, items } = await parseFeedXml(xml);
+  return {
+    notModified: false,
+    title,
+    items,
+    etag: resp.headers.get('etag') || null,
+    lastModified: resp.headers.get('last-modified') || null,
+  };
+}
