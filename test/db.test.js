@@ -126,6 +126,12 @@ describe('entries DAO — 去重是核心', () => {
     expect(ctx.entries.countPending()).toBe(2);
   });
 
+  it('updateContent 覆蓋原文 HTML', () => {
+    const e = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1', content_html: '<p>舊</p>' }).entry;
+    ctx.entries.updateContent(e.id, '<p>全文</p>');
+    expect(ctx.entries.get(e.id).content_html).toBe('<p>全文</p>');
+  });
+
   it('resetErrorsToPending 把 error 重設回 pending', () => {
     const a = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1' }).entry;
     const b = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g2' }).entry;

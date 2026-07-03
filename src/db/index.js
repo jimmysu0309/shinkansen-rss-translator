@@ -186,6 +186,11 @@ function makeEntriesDao(db) {
       return byId.get(id);
     },
     markError(id, err) { markError.run({ id, err: String(err).slice(0, 500) }); return byId.get(id); },
+    /** 更新原文 HTML(供 fetch_article 抓到全文後覆蓋摘要) */
+    updateContent(id, html) {
+      db.prepare('UPDATE entries SET content_html = ? WHERE id = ?').run(html, id);
+      return byId.get(id);
+    },
     /** 把某 feed 的 error 條目重設回 pending(供「重翻」);回傳重設筆數 */
     resetErrorsToPending(feedId) {
       return db.prepare(

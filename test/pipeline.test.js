@@ -134,6 +134,37 @@ describe('processFeed 編排', () => {
     expect(bad.translation_error).toContain('API 爆了');
   });
 
+  it('fetch_article:翻譯前抓全文覆蓋摘要,並存回 content_html', async () => {
+    const f2 = ctx.feeds.create({ source_url: 'https://ex.com/ft', fetch_article: true });
+    const items = [{ guid: 'g1', title: 'A', url: 'https://ex.com/a', contentHtml: '<p>只有摘要</p>', published_at: 1 }];
+    let sawContent = null;
+    const captureTranslate = async ({ contentHtml }) => {
+      sawContent = contentHtml;
+      return { titleTranslated: '譯', contentTranslated: contentHtml, usage: { inputTokens: 1, outputTokens: 1 }, hadMismatch: false };
+    };
+    await processFeed(ctx, f2, {
+      apiKey: 'x', now: fixedNow, translateEntry: captureTranslate,
+      fetchFeed: makeFetch(items),
+      fetchFullText: async (url) => `<p>完整全文 from ${url}</p>`,
+    });
+    expect(sawContent).toContain('完整全文'); // 翻譯拿到的是全文,不是摘要
+    expect(ctx.entries.getByGuid(f2.id, 'g1').content_html).toContain('完整全文'); // 存回 DB
+  });
+
+  it('fetch_article 抓全文失敗 → 退回原摘要,仍翻譯', async () => {
+    const f3 = ctx.feeds.create({ source_url: 'https://ex.com/ft2', fetch_article: true });
+    const items = [{ guid: 'g1', title: 'A', url: 'https://ex.com/a', contentHtml: '<p>摘要</p>', published_at: 1 }];
+    let sawContent = null;
+    const cap = async ({ contentHtml }) => { sawContent = contentHtml; return fakeTranslate({ title: 'A', contentHtml }); };
+    const r = await processFeed(ctx, f3, {
+      apiKey: 'x', now: fixedNow, translateEntry: cap,
+      fetchFeed: makeFetch(items),
+      fetchFullText: async () => null, // 抓不到
+    });
+    expect(sawContent).toContain('摘要'); // 退回摘要
+    expect(r.translated).toBe(1);
+  });
+
   it('沒 guid 的 item 跳過(無法去重)', async () => {
     const items = [{ guid: null, title: 'X', contentHtml: '<p>z</p>', published_at: 1 }];
     const r = await processFeed(ctx, feed, {

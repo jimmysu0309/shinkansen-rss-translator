@@ -10,6 +10,7 @@
 
 import { fetchFeed as defaultFetchFeed } from './fetch-feed.js';
 import { translateEntry as defaultTranslateEntry } from './translate-entry.js';
+import { fetchFullText as defaultFetchFullText } from './full-text.js';
 import {
   DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, DEFAULT_TARGET_LANGUAGE,
   DEFAULT_MAX_UNITS_PER_BATCH, DEFAULT_MAX_CHARS_PER_BATCH, DEFAULT_TEMPERATURE,
@@ -47,6 +48,7 @@ export async function processFeed(ctx, feed, deps = {}) {
   const apiKey = deps.apiKey;
   const fetchImpl = deps.fetchFeed || defaultFetchFeed;
   const translateImpl = deps.translateEntry || defaultTranslateEntry;
+  const fetchFullTextImpl = deps.fetchFullText || defaultFetchFullText;
   const now = deps.now || (() => Date.now());
   const log = (level, category, message, detail) =>
     ctx.logs?.append({ ts: now(), level, category, message, feedId: feed.id, detail });
@@ -88,7 +90,23 @@ export async function processFeed(ctx, feed, deps = {}) {
   let translated = 0, failed = 0;
   for (const e of pending) {
     try {
-      const r = await translateImpl({ title: e.title, contentHtml: e.content_html }, opts);
+      // 抓取全文(fetch_article):翻譯前先抓整篇正文覆蓋摘要
+      let contentHtml = e.content_html;
+      if (feed.fetch_article && e.url) {
+        try {
+          const full = await fetchFullTextImpl(e.url);
+          if (full) {
+            contentHtml = full;
+            ctx.entries.updateContent(e.id, full);
+            log('info', 'fetch', `抓取全文:${e.title || '(無標題)'}`);
+          } else {
+            log('warn', 'fetch', `抓取全文無結果,改用原摘要:${e.title || '(無標題)'}`);
+          }
+        } catch (err) {
+          log('warn', 'fetch', `抓取全文失敗,改用原摘要:${e.title || '(無標題)'}`, String(err?.message || err));
+        }
+      }
+      const r = await translateImpl({ title: e.title, contentHtml }, opts);
       ctx.entries.markDone(e.id, {
         titleTranslated: r.titleTranslated,
         contentTranslated: r.contentTranslated,
