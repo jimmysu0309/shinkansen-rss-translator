@@ -63,24 +63,26 @@ export async function processFeed(ctx, feed, deps = {}) {
   ctx.feeds.setFetchMeta(feed.id, {
     etag: res.etag, lastModified: res.lastModified, checkedAt: now(), error: null,
   });
-  if (res.notModified) {
-    log('info', 'fetch', `${feed.title || feed.source_url}:未更新(304)`);
-    return { fetched: 0, added: 0, translated: 0, failed: 0, notModified: true };
-  }
 
-  // 2. upsert(依 guid 去重),只有新條目會被建立
+  // 2. upsert(依 guid 去重),只有新條目會被建立。
+  //    注意:即使 304(未更新)也要往下翻 pending —— 之前失敗 / 未翻的 backlog 必須清掉,
+  //    不能因為來源沒新內容就卡住(否則 reset 成 pending 的舊文章永遠補不到)。
   let added = 0;
-  for (const it of res.items) {
-    if (!it.guid) continue; // 沒 guid 無法去重,跳過(避免每次重抓都重複)
-    const { inserted } = ctx.entries.upsertNew({
-      feed_id: feed.id, guid: it.guid, url: it.url, title: it.title,
-      content_html: it.contentHtml, published_at: it.published_at,
-    }, now());
-    if (inserted) added++;
+  if (res.notModified) {
+    log('info', 'fetch', `${feed.title || feed.source_url}:未更新(304),檢查待翻 backlog`);
+  } else {
+    for (const it of res.items) {
+      if (!it.guid) continue; // 沒 guid 無法去重,跳過(避免每次重抓都重複)
+      const { inserted } = ctx.entries.upsertNew({
+        feed_id: feed.id, guid: it.guid, url: it.url, title: it.title,
+        content_html: it.contentHtml, published_at: it.published_at,
+      }, now());
+      if (inserted) added++;
+    }
+    log('info', 'fetch', `${feed.title || feed.source_url}:抓取 ${res.items.length} 篇,新增 ${added} 篇`);
   }
-  log('info', 'fetch', `${feed.title || feed.source_url}:抓取 ${res.items.length} 篇,新增 ${added} 篇`);
 
-  // 3. 只翻 pending(新條目 + 上次失敗的)
+  // 3. 翻 pending(新條目 + 上次失敗重設的),不論 304 與否都執行
   const opts = buildTranslateOpts(ctx, feed, apiKey);
   const pending = ctx.entries.pendingByFeed(feed.id);
   let translated = 0, failed = 0;
@@ -106,7 +108,7 @@ export async function processFeed(ctx, feed, deps = {}) {
     }
   }
 
-  return { fetched: res.items.length, added, translated, failed, notModified: false };
+  return { fetched: res.items.length, added, translated, failed, notModified: !!res.notModified };
 }
 
 /**

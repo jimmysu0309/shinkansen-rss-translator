@@ -91,13 +91,27 @@ describe('processFeed 編排', () => {
     expect(ctx.usage.getStats().calls).toBe(1); // 只翻過一次
   });
 
-  it('304 Not Modified:不動 entries', async () => {
+  it('304 Not Modified:不新增 entries', async () => {
     const r = await processFeed(ctx, feed, {
       apiKey: 'x', now: fixedNow, translateEntry: fakeTranslate,
       fetchFeed: async () => ({ notModified: true, items: [], etag: 'W/"v1"', lastModified: null }),
     });
     expect(r.notModified).toBe(true);
+    expect(r.added).toBe(0);
     expect(ctx.entries.listByFeed(feed.id)).toHaveLength(0);
+  });
+
+  it('304 但有 pending backlog → 仍翻譯(不能因來源沒更新就卡住)', async () => {
+    // 預先放一筆 pending(模擬之前失敗重設的文章)
+    ctx.entries.upsertNew({ feed_id: feed.id, guid: 'old', title: 'Old', content_html: '<p>x</p>' }, fixedNow());
+    const r = await processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, translateEntry: fakeTranslate,
+      fetchFeed: async () => ({ notModified: true, items: [], etag: 'W/"v1"', lastModified: null }),
+    });
+    expect(r.notModified).toBe(true);
+    expect(r.added).toBe(0);
+    expect(r.translated).toBe(1); // backlog 被翻掉
+    expect(ctx.entries.getByGuid(feed.id, 'old').translation_status).toBe('done');
   });
 
   it('單篇翻譯失敗 → 標記 error,不影響其他篇', async () => {
