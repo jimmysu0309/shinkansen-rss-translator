@@ -223,11 +223,15 @@ describe('用量:日彙總 / 快取命中率 / CSV', () => {
     expect(res.body).toContain('輸入tokens');
   });
 
-  it('用量明細含時間與模型', async () => {
-    const u = (await app.inject({ method: 'GET', url: '/api/usage' })).json();
-    expect(u.records.length).toBeGreaterThanOrEqual(1);
-    expect(u.records[0]).toHaveProperty('ts');
-    expect(u.records[0]).toHaveProperty('model');
+  it('用量明細分頁:含時間/模型 + total,offset 生效', async () => {
+    const r0 = (await app.inject({ method: 'GET', url: '/api/usage/records?limit=50&offset=0' })).json();
+    expect(r0.records.length).toBeGreaterThanOrEqual(1);
+    expect(r0.records[0]).toHaveProperty('ts');
+    expect(r0.records[0]).toHaveProperty('model');
+    expect(typeof r0.total).toBe('number');
+    // limit=1 分頁:第 0 頁與第 1 頁不同筆(若有 >1 筆)
+    const p0 = (await app.inject({ method: 'GET', url: '/api/usage/records?limit=1&offset=0' })).json();
+    expect(p0.records).toHaveLength(1);
   });
 });
 
@@ -237,11 +241,17 @@ describe('Log API', () => {
     await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 產生 fetch + translate log
   });
 
-  it('GET /api/logs 回紀錄(新到舊)', async () => {
+  it('GET /api/logs 回紀錄(新到舊)+ total,分頁 offset 生效', async () => {
     const r = (await app.inject({ method: 'GET', url: '/api/logs' })).json();
     expect(r.logs.length).toBeGreaterThanOrEqual(2); // 至少 fetch + translate
-    // 新到舊:ts 遞減
+    expect(typeof r.total).toBe('number');
+    expect(r.total).toBeGreaterThanOrEqual(r.logs.length);
     for (let i = 1; i < r.logs.length; i++) expect(r.logs[i - 1].ts).toBeGreaterThanOrEqual(r.logs[i].ts);
+    // 每頁 1 筆:第 0、1 頁不同
+    const a = (await app.inject({ method: 'GET', url: '/api/logs?limit=1&offset=0' })).json();
+    const b = (await app.inject({ method: 'GET', url: '/api/logs?limit=1&offset=1' })).json();
+    expect(a.logs).toHaveLength(1);
+    if (r.total > 1) expect(a.logs[0].id).not.toBe(b.logs[0].id);
   });
 
   it('依 category 過濾', async () => {
@@ -287,7 +297,25 @@ describe('清除用量', () => {
     expect(del.ok).toBe(true);
     const after = (await app.inject({ method: 'GET', url: '/api/usage' })).json();
     expect(after.total.calls).toBe(0);
-    expect(after.records).toHaveLength(0);
+    const recs = (await app.inject({ method: 'GET', url: '/api/usage/records' })).json();
+    expect(recs.records).toHaveLength(0);
+  });
+});
+
+describe('重翻失敗文章', () => {
+  it('retry-errors:重設 error→pending 再翻', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
+    // 造一筆 error 條目
+    const { entry } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'e1', title: 'Err', content_html: '<p>x</p>' });
+    ctx.entries.markError(entry.id, new Error('boom'));
+    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retry-errors` })).json();
+    expect(r.reset).toBe(1);
+    expect(ctx.entries.getByGuid(f.id, 'e1').translation_status).toBe('done'); // 被 fake 翻好
+  });
+  it('沒有 error → reset 0,不動作', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://noerr.com/feed' } })).json();
+    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retry-errors` })).json();
+    expect(r).toMatchObject({ reset: 0, translated: 0 });
   });
 });
 

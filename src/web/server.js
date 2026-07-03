@@ -219,6 +219,20 @@ export function buildServer(ctx, opts = {}) {
     return result;
   });
 
+  // 重翻:把此 feed 翻譯失敗(error)的文章重設為 pending 再翻一次
+  app.post('/api/feeds/:id/retry-errors', async (req, reply) => {
+    const feed = ctx.feeds.get(Number(req.params.id));
+    if (!feed) return reply.code(404).send({ error: 'feed 不存在' });
+    const reset = ctx.entries.resetErrorsToPending(feed.id);
+    if (reset === 0) return { reset: 0, translated: 0, failed: 0 };
+    const engine = feed.engine || ctx.settings.get('engine', 'gemini');
+    if (engine === 'gemini' && !apiKey()) {
+      return reply.code(400).send({ error: '缺 Gemini API 金鑰,請到設定頁填入或改用 Google 翻譯' });
+    }
+    const r = await processFeed(ctx, feed, { apiKey: apiKey(), ...processDeps });
+    return { reset, translated: r.translated, failed: r.failed };
+  });
+
   // ─── 用量 API ───
   const usageRange = (q) => ({
     from: Number(q.from) || 0,
@@ -255,21 +269,26 @@ export function buildServer(ctx, opts = {}) {
     const byFeed = [...feedMap.values()].sort((a, b) => b.cost - a.cost || b.calls - a.calls);
 
     const cacheHitRate = stats.input_tokens > 0 ? stats.cached_tokens / stats.input_tokens : 0;
-
-    // 明細:最近 N 筆(含時間 + 模型)
-    const records = ctx.usage.getRecords({ from, to, limit: 100 }).map((r) => ({
-      ts: r.ts, feed_title: r.feed_title, entry_title: r.entry_title, model: r.model,
-      input_tokens: r.input_tokens, output_tokens: r.output_tokens,
-      cost: costForUsage(r.model, r, ps),
-    }));
-
     return {
       total: { ...stats, cost: totalCost, cacheHitRate },
       byFeed,
       daily,
-      records,
       pending: ctx.entries.countPending(),
     };
+  });
+
+  // 用量明細分頁(每頁 50 筆)
+  app.get('/api/usage/records', async (req) => {
+    const { from, to } = usageRange(req.query);
+    const ps = pricingSettings();
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const records = ctx.usage.getRecords({ from, to, limit, offset }).map((r) => ({
+      ts: r.ts, feed_title: r.feed_title, entry_title: r.entry_title, model: r.model,
+      input_tokens: r.input_tokens, output_tokens: r.output_tokens,
+      cost: costForUsage(r.model, r, ps),
+    }));
+    return { records, total: ctx.usage.getStats({ from, to }).calls };
   });
 
   // CSV 匯出(帶 BOM,Excel 可直接開)—— 每列 = 一次 feed 內某篇文章的翻譯
@@ -294,13 +313,17 @@ export function buildServer(ctx, opts = {}) {
     return { ok: true, deleted };
   });
 
-  // ─── Log API ───
+  // ─── Log API ───(分頁,每頁 50 筆)
   app.get('/api/logs', async (req) => {
     const { from, to } = usageRange(req.query);
     const level = req.query.level || null;
     const category = req.query.category || null;
-    const limit = Math.min(Number(req.query.limit) || 500, 2000);
-    return { logs: ctx.logs.query({ from, to, level, category, limit }) };
+    const limit = Math.min(Number(req.query.limit) || 50, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    return {
+      logs: ctx.logs.query({ from, to, level, category, limit, offset }),
+      total: ctx.logs.count({ from, to, level, category }),
+    };
   });
 
   app.get('/api/logs/export.csv', async (req, reply) => {

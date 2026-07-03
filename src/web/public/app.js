@@ -211,6 +211,7 @@ async function loadFeeds() {
         </div>
         <div class="feed-actions">
           <button class="ghost" data-act="edit">編輯</button>
+          ${counts.error ? '<button class="ghost" data-act="retry">重翻</button>' : ''}
           <button class="ghost" data-act="refresh">刷新</button>
           <button class="danger" data-act="delete">刪除</button>
         </div>
@@ -261,6 +262,11 @@ $('#feed-list').addEventListener('click', async (e) => {
       btn.textContent = '刷新中…'; btn.disabled = true;
       const r = await api('POST', `/api/feeds/${id}/refresh`);
       toast(`新增 ${r.added} 篇、翻譯 ${r.translated} 篇${r.failed ? `、失敗 ${r.failed}` : ''}`);
+      loadFeeds();
+    } else if (act === 'retry') {
+      btn.textContent = '重翻中…'; btn.disabled = true;
+      const r = await api('POST', `/api/feeds/${id}/retry-errors`);
+      toast(`重翻 ${r.reset} 篇:成功 ${r.translated}、失敗 ${r.failed}`);
       loadFeeds();
     } else if (act === 'delete') {
       if (!confirm('確定刪除這個 feed 及其所有文章?')) return;
@@ -373,11 +379,40 @@ async function loadUsage() {
     ? u.byFeed.map(f => `<tr><td>${esc(f.feed_title || '—')}</td><td>${fmt(f.calls)}</td><td>${fmt(f.input_tokens)}</td><td>${fmt(f.output_tokens)}</td><td>${fmt(f.cached_tokens)}</td><td>${fmtUsd(f.cost)}</td></tr>`).join('')
     : '<tr><td colspan="6" style="text-align:center;color:var(--fg-dim)">尚無資料</td></tr>';
 
-  // 明細:時間 + 模型
-  $('#u-records tbody').innerHTML = u.records.length
-    ? u.records.map(r => `<tr><td class="time">${fmtTime(r.ts)}</td><td>${esc(r.feed_title || '—')}</td><td>${esc(r.model || '—')}</td><td>${fmt(r.input_tokens)}</td><td>${fmt(r.output_tokens)}</td><td>${fmtUsd(r.cost)}</td></tr>`).join('')
-    : '<tr><td colspan="6" style="text-align:center;color:var(--fg-dim)">尚無資料</td></tr>';
+  recPage = 0;
+  await loadRecords();
 }
+
+const PAGE_SIZE = 50;
+
+// 分頁列渲染 + 按鈕啟用狀態
+function renderPager(sel, page, total) {
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const el = $(sel);
+  el.querySelector('.pager-info').textContent = total ? `第 ${page + 1} / ${pages} 頁（共 ${total}）` : '無資料';
+  el.querySelector('[data-dir="-1"]').disabled = page <= 0;
+  el.querySelector('[data-dir="1"]').disabled = page >= pages - 1;
+}
+
+// 用量明細(分頁,每頁 50)
+let recPage = 0;
+async function loadRecords() {
+  const p = new URLSearchParams();
+  if (usageDays) p.set('from', Date.now() - usageDays * 86400_000);
+  p.set('limit', PAGE_SIZE); p.set('offset', recPage * PAGE_SIZE);
+  const { records, total } = await api('GET', '/api/usage/records?' + p.toString());
+  $('#u-records tbody').innerHTML = records.length
+    ? records.map(r => `<tr><td class="time">${fmtTime(r.ts)}</td><td>${esc(r.feed_title || '—')}</td><td>${esc(r.model || '—')}</td><td>${fmt(r.input_tokens)}</td><td>${fmt(r.output_tokens)}</td><td>${fmtUsd(r.cost)}</td></tr>`).join('')
+    : '<tr><td colspan="6" style="text-align:center;color:var(--fg-dim)">尚無資料</td></tr>';
+  renderPager('#rec-pager', recPage, total);
+}
+
+$('#rec-pager').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  recPage += Number(b.dataset.dir); loadRecords();
+});
+
+$('#refresh-usage').addEventListener('click', () => loadUsage());
 
 function renderChart(daily) {
   const el = $('#u-chart');
@@ -427,11 +462,17 @@ function initLogFilters() {
   const lvl = $('#log-level'), cat = $('#log-category');
   DEFAULTS.logLevels.forEach(l => lvl.add(new Option(l, l)));
   DEFAULTS.logCategories.forEach(c => cat.add(new Option(c, c)));
-  lvl.addEventListener('change', loadLogs);
-  cat.addEventListener('change', loadLogs);
+  const reload = () => { logPage = 0; loadLogs(); };
+  lvl.addEventListener('change', reload);
+  cat.addEventListener('change', reload);
+  $('#log-pager').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b || b.disabled) return;
+    logPage += Number(b.dataset.dir); loadLogs();
+  });
   logFiltersReady = true;
 }
 
+// 過濾條件(給匯出用,不含分頁)
 function logQuery() {
   const p = new URLSearchParams();
   const lvl = $('#log-level').value, cat = $('#log-category').value;
@@ -440,8 +481,14 @@ function logQuery() {
   return p.toString() ? '?' + p.toString() : '';
 }
 
+let logPage = 0;
 async function loadLogs() {
-  const { logs } = await api('GET', '/api/logs' + logQuery());
+  const p = new URLSearchParams();
+  const lvl = $('#log-level').value, cat = $('#log-category').value;
+  if (lvl) p.set('level', lvl);
+  if (cat) p.set('category', cat);
+  p.set('limit', PAGE_SIZE); p.set('offset', logPage * PAGE_SIZE);
+  const { logs, total } = await api('GET', '/api/logs?' + p.toString());
   $('#log-table tbody').innerHTML = logs.length
     ? logs.map(l => `<tr>
         <td class="time">${fmtTime(l.ts)}</td>
@@ -451,6 +498,7 @@ async function loadLogs() {
         <td>${esc(l.feed_title || '—')}</td>
       </tr>`).join('')
     : '<tr><td colspan="5" style="text-align:center;color:var(--fg-dim)">此範圍尚無紀錄</td></tr>';
+  renderPager('#log-pager', logPage, total);
 }
 
 $('#export-logs').addEventListener('click', () => {

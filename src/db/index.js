@@ -186,6 +186,12 @@ function makeEntriesDao(db) {
       return byId.get(id);
     },
     markError(id, err) { markError.run({ id, err: String(err).slice(0, 500) }); return byId.get(id); },
+    /** 把某 feed 的 error 條目重設回 pending(供「重翻」);回傳重設筆數 */
+    resetErrorsToPending(feedId) {
+      return db.prepare(
+        "UPDATE entries SET translation_status='pending', translation_error=NULL WHERE feed_id=? AND translation_status='error'",
+      ).run(feedId).changes;
+    },
     deleteByFeed(feedId) { return delByFeed.run(feedId).changes; },
   };
 }
@@ -229,14 +235,14 @@ function makeUsageDao(db) {
     LEFT JOIN entries e ON e.id = u.entry_id
     WHERE u.ts >= @from AND u.ts < @to ORDER BY u.ts
   `);
-  // 最近 N 筆明細(新到舊),供用量頁「明細」表顯示時間 + 模型
+  // 明細(新到舊),支援分頁,供用量頁「明細」表顯示時間 + 模型
   const recentRows = db.prepare(`
     SELECT u.ts, u.model, u.input_tokens, u.output_tokens, u.cached_tokens,
            f.title AS feed_title, e.title AS entry_title
     FROM usage u
     LEFT JOIN feeds f   ON f.id = u.feed_id
     LEFT JOIN entries e ON e.id = u.entry_id
-    WHERE u.ts >= @from AND u.ts < @to ORDER BY u.ts DESC LIMIT @limit
+    WHERE u.ts >= @from AND u.ts < @to ORDER BY u.ts DESC LIMIT @limit OFFSET @offset
   `);
 
   return {
@@ -264,9 +270,9 @@ function makeUsageDao(db) {
     getRaw({ from = 0, to = Number.MAX_SAFE_INTEGER } = {}) {
       return rawRows.all({ from, to });
     },
-    /** 最近 N 筆用量明細(含時間 + 模型 + feed 標題),新到舊 */
-    getRecords({ from = 0, to = Number.MAX_SAFE_INTEGER, limit = 100 } = {}) {
-      return recentRows.all({ from, to, limit });
+    /** 用量明細分頁(含時間 + 模型 + feed 標題),新到舊 */
+    getRecords({ from = 0, to = Number.MAX_SAFE_INTEGER, limit = 50, offset = 0 } = {}) {
+      return recentRows.all({ from, to, limit, offset });
     },
     /** 清空所有用量紀錄。回傳刪除筆數。 */
     clear() {
@@ -295,18 +301,26 @@ function makeLogsDao(db) {
         detail: detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)),
       });
     },
-    /** 查詢:可依 level / category 過濾,新到舊 */
-    query({ from = 0, to = Number.MAX_SAFE_INTEGER, level = null, category = null, limit = 500 } = {}) {
+    /** 查詢:可依 level / category 過濾,新到舊,支援分頁 */
+    query({ from = 0, to = Number.MAX_SAFE_INTEGER, level = null, category = null, limit = 50, offset = 0 } = {}) {
       // 加 l. 前綴:feeds 表也有 category 欄,JOIN 後不加會 ambiguous
       const where = ['l.ts >= @from', 'l.ts < @to'];
-      const params = { from, to, limit };
+      const params = { from, to, limit, offset };
       if (level) { where.push('l.level = @level'); params.level = level; }
       if (category) { where.push('l.category = @category'); params.category = category; }
       return db.prepare(
         `SELECT l.*, f.title AS feed_title FROM logs l
          LEFT JOIN feeds f ON f.id = l.feed_id
-         WHERE ${where.join(' AND ')} ORDER BY l.ts DESC LIMIT @limit`,
+         WHERE ${where.join(' AND ')} ORDER BY l.ts DESC LIMIT @limit OFFSET @offset`,
       ).all(params);
+    },
+    /** 符合過濾條件的總筆數(分頁用) */
+    count({ from = 0, to = Number.MAX_SAFE_INTEGER, level = null, category = null } = {}) {
+      const where = ['ts >= @from', 'ts < @to'];
+      const params = { from, to };
+      if (level) { where.push('level = @level'); params.level = level; }
+      if (category) { where.push('category = @category'); params.category = category; }
+      return db.prepare(`SELECT COUNT(*) n FROM logs WHERE ${where.join(' AND ')}`).get(params).n;
     },
     /** 刪除早於指定時間的 log(保留天數用);回傳刪除筆數 */
     pruneBefore(ts) {
@@ -316,6 +330,5 @@ function makeLogsDao(db) {
     clear() {
       return db.prepare('DELETE FROM logs').run().changes;
     },
-    count() { return countStmt.get().n; },
   };
 }

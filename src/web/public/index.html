@@ -135,6 +135,7 @@
           <button data-days="0" class="range">全部</button>
         </div>
         <div class="toolbar-actions">
+          <button id="refresh-usage" class="ghost">重新整理</button>
           <button id="export-csv" class="ghost">匯出 CSV</button>
           <button id="clear-usage" class="danger">清除</button>
         </div>
@@ -159,9 +160,14 @@
       </div>
 
       <div class="card">
-        <h3>明細（最近 100 筆）</h3>
+        <h3>明細</h3>
         <div class="table-scroll">
           <table id="u-records"><thead><tr><th>時間</th><th>Feed</th><th>模型</th><th>輸入</th><th>輸出</th><th>費用</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="pager" id="rec-pager">
+          <button class="ghost" data-dir="-1">上一頁</button>
+          <span class="pager-info"></span>
+          <button class="ghost" data-dir="1">下一頁</button>
         </div>
       </div>
       <p class="hint" id="u-pending-note"></p>
@@ -182,6 +188,11 @@
       <div class="card">
         <div class="table-scroll">
           <table id="log-table"><thead><tr><th>時間</th><th>等級</th><th>類別</th><th>訊息</th><th>Feed</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="pager" id="log-pager">
+          <button class="ghost" data-dir="-1">上一頁</button>
+          <span class="pager-info"></span>
+          <button class="ghost" data-dir="1">下一頁</button>
         </div>
       </div>
     </section>

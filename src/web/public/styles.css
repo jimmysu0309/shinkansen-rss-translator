@@ -146,6 +146,11 @@ select option[value=""] { color: var(--accent); }
 .chart .bar-wrap:hover .bar-val { opacity: 1; }
 .chart-empty { color: var(--fg-dim); font-size: 12px; padding: 40px 0; text-align: center; width: 100%; }
 
+/* 分頁列 */
+.pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 10px; }
+.pager-info { font-size: 12px; color: var(--fg-dim); font-variant-numeric: tabular-nums; min-width: 90px; text-align: center; }
+.pager button[disabled] { opacity: .4; cursor: default; }
+
 /* 表格橫向捲動(明細 / log 較寬時)*/
 .table-scroll { overflow-x: auto; }
 .table-scroll table { min-width: 480px; }

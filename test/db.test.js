@@ -125,6 +125,17 @@ describe('entries DAO — 去重是核心', () => {
     ctx.entries.upsertNew({ feed_id: feedId, guid: 'g2' });
     expect(ctx.entries.countPending()).toBe(2);
   });
+
+  it('resetErrorsToPending 把 error 重設回 pending', () => {
+    const a = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1' }).entry;
+    const b = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g2' }).entry;
+    ctx.entries.markError(a.id, 'x');
+    ctx.entries.markDone(b.id, {}); // done 不受影響
+    const n = ctx.entries.resetErrorsToPending(feedId);
+    expect(n).toBe(1);
+    expect(ctx.entries.getByGuid(feedId, 'g1').translation_status).toBe('pending');
+    expect(ctx.entries.getByGuid(feedId, 'g2').translation_status).toBe('done');
+  });
 });
 
 describe('usage DAO', () => {
@@ -187,6 +198,10 @@ describe('usage DAO', () => {
     expect(recs[0].ts).toBe(3000); // 新到舊
     expect(recs[0].model).toBe('flash');
     expect(recs[0].feed_title).toBe('F');
+    // 分頁:limit 1 offset 1 → 第二筆(較舊)
+    const page2 = ctx.usage.getRecords({ limit: 1, offset: 1 });
+    expect(page2).toHaveLength(1);
+    expect(page2[0].ts).toBe(1000);
   });
 });
 
@@ -206,6 +221,9 @@ describe('logs DAO', () => {
     expect(ctx.logs.query({ level: 'error' })).toHaveLength(2);
     expect(ctx.logs.query({ category: 'fetch' })).toHaveLength(2);
     expect(ctx.logs.query({ level: 'error', category: 'fetch' })).toHaveLength(1);
+    // count 與 query 過濾一致;offset 分頁
+    expect(ctx.logs.count({ level: 'error' })).toBe(2);
+    expect(ctx.logs.query({ level: 'error', limit: 1, offset: 1 })).toHaveLength(1);
   });
 
   it('detail 物件會序列化;join feed 標題', () => {
