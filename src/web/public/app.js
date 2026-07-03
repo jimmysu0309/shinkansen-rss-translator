@@ -177,6 +177,16 @@ function statusBadges(counts) {
   return parts.join('') || '<span class="badge">尚無文章</span>';
 }
 
+// 產生 <option> 字串(含「繼承全域」sentinel),selected 標在目前值
+function optionsHtml(items, selected) {
+  const inherit = `<option value=""${!selected ? ' selected' : ''}>繼承全域預設</option>`;
+  return inherit + items.map(o => {
+    const val = o.id ?? o;
+    const label = o.label ?? o;
+    return `<option value="${esc(val)}"${val === selected ? ' selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+}
+
 async function loadFeeds() {
   const feeds = await api('GET', '/api/feeds');
   const list = $('#feed-list');
@@ -191,10 +201,11 @@ async function loadFeeds() {
     return `<div class="feed-item" data-id="${f.id}">
       <div class="feed-head">
         <div>
-          <div class="feed-title">${esc(f.title || f.source_url)}</div>
+          <div class="feed-title">${esc(f.title || f.source_url)}${f.enabled ? '' : ' <span class="badge">已停用</span>'}</div>
           <div class="feed-url">${esc(f.source_url)}</div>
         </div>
         <div class="feed-actions">
+          <button class="ghost" data-act="edit">編輯</button>
           <button class="ghost" data-act="refresh">刷新</button>
           <button class="danger" data-act="delete">刪除</button>
         </div>
@@ -207,6 +218,24 @@ async function loadFeeds() {
         ${f.category ? `<span>分類:${esc(f.category)}</span>` : ''}
         ${f.last_error ? `<span class="badge error">抓取錯誤</span>` : ''}
       </div>
+
+      <div class="feed-edit" hidden>
+        <div class="grid2">
+          <label>標題<input type="text" data-f="title" value="${esc(f.title || '')}"></label>
+          <label>分類<input type="text" data-f="category" value="${esc(f.category || '')}"></label>
+          <label>引擎<select data-f="engine">${DEFAULTS.engines.map(o => `<option value="${esc(o.id)}"${o.id === (f.engine || 'gemini') ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>
+          <label>Gemini 模型<select data-f="model">${optionsHtml(DEFAULTS.models, f.model)}</select></label>
+        </div>
+        <div class="edit-row">
+          <label class="checkbox-label"><input type="checkbox" data-f="fetch_article" ${f.fetch_article ? 'checked' : ''}><span>抓取全文</span></label>
+          <label class="checkbox-label"><input type="checkbox" data-f="enabled" ${f.enabled ? 'checked' : ''}><span>啟用</span></label>
+          <div class="edit-actions">
+            <button class="primary" data-act="save">儲存</button>
+            <button class="ghost" data-act="cancel">取消</button>
+          </div>
+        </div>
+      </div>
+
       <div class="rss-row">
         <input type="text" readonly value="${esc(rssUrl)}">
         <button class="ghost" data-act="copy">複製</button>
@@ -232,6 +261,24 @@ $('#feed-list').addEventListener('click', async (e) => {
       if (!confirm('確定刪除這個 feed 及其所有文章?')) return;
       await api('DELETE', `/api/feeds/${id}`);
       toast('已刪除'); loadFeeds();
+    } else if (act === 'edit') {
+      const box = $('.feed-edit', item);
+      box.hidden = !box.hidden; // 切換編輯面板
+    } else if (act === 'cancel') {
+      $('.feed-edit', item).hidden = true;
+    } else if (act === 'save') {
+      const box = $('.feed-edit', item);
+      const val = (sel) => $(`[data-f="${sel}"]`, box);
+      const patch = {
+        title: val('title').value.trim() || null,
+        category: val('category').value.trim() || null,
+        engine: val('engine').value,          // engine 一律具體值(NOT NULL)
+        model: val('model').value || null,    // model 可為 null = 繼承全域
+        fetch_article: val('fetch_article').checked,
+        enabled: val('enabled').checked,
+      };
+      await api('PATCH', `/api/feeds/${id}`, patch);
+      toast('已更新'); loadFeeds();
     }
   } catch (err) { toast('操作失敗:' + err.message); btn.disabled = false; }
 });

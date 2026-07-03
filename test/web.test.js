@@ -110,6 +110,20 @@ describe('feeds API', () => {
     const r = await app.inject({ method: 'GET', url: '/api/feeds/999' });
     expect(r.statusCode).toBe(404);
   });
+
+  it('編輯:PATCH 整組參數(title/category/engine/model/fetch_article/enabled)', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', title: '舊' } })).json();
+    const patched = (await app.inject({
+      method: 'PATCH', url: `/api/feeds/${f.id}`,
+      payload: { title: '新標題', category: '科技', engine: 'google', model: null, fetch_article: true, enabled: false },
+    })).json();
+    expect(patched.title).toBe('新標題');
+    expect(patched.category).toBe('科技');
+    expect(patched.engine).toBe('google');
+    expect(patched.model).toBe(null);
+    expect(patched.fetch_article).toBe(1);
+    expect(patched.enabled).toBe(0);
+  });
 });
 
 describe('手動刷新', () => {

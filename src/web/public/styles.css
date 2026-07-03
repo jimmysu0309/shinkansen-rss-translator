@@ -172,6 +172,12 @@ td .time { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(-
 .badge.done { color: var(--ok); }
 .badge.pending { color: var(--accent); }
 .badge.error { color: var(--danger); }
+.feed-edit { margin: 10px 0; padding: 12px; background: var(--bg); border-radius: 8px; }
+.feed-edit .grid2 { gap: 8px 12px; }
+.feed-edit label { font-size: 12px; color: var(--fg-dim); }
+.edit-row { display: flex; align-items: center; gap: 16px; margin-top: 10px; flex-wrap: wrap; }
+.edit-actions { margin-left: auto; display: flex; gap: 6px; }
+
 .rss-row { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
 .rss-row input { font-size: 11px; font-family: ui-monospace, Menlo, monospace; padding: 5px 8px; margin: 0; }
 .feed-actions { display: flex; gap: 4px; }
