@@ -197,6 +197,12 @@ function makeEntriesDao(db) {
         "UPDATE entries SET translation_status='pending', translation_error=NULL WHERE feed_id=? AND translation_status='error'",
       ).run(feedId).changes;
     },
+    /** 把某 feed 的所有條目(含 done)重設回 pending(供「整 feed 重譯」);回傳重設筆數 */
+    resetAllToPending(feedId) {
+      return db.prepare(
+        "UPDATE entries SET translation_status='pending', translation_error=NULL WHERE feed_id=?",
+      ).run(feedId).changes;
+    },
     deleteByFeed(feedId) { return delByFeed.run(feedId).changes; },
   };
 }

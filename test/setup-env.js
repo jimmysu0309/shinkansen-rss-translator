@@ -3,7 +3,10 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const envPath = fileURLToPath(new URL('../.env', import.meta.url));
-if (existsSync(envPath) && typeof process.loadEnvFile === 'function') {
-  process.loadEnvFile(envPath);
-}
+// jsdom 測試環境的 import.meta.url 不是 file://,fileURLToPath 會丟錯 → 包起來略過
+try {
+  const envPath = fileURLToPath(new URL('../.env', import.meta.url));
+  if (existsSync(envPath) && typeof process.loadEnvFile === 'function') {
+    process.loadEnvFile(envPath);
+  }
+} catch { /* 非 file:// 環境(jsdom),沒 .env 也無妨 */ }

@@ -235,6 +235,7 @@ async function loadFeeds() {
         <div class="edit-row">
           <label class="checkbox-label"><input type="checkbox" data-f="fetch_article" ${f.fetch_article ? 'checked' : ''}><span>抓取全文</span></label>
           <label class="checkbox-label"><input type="checkbox" data-f="enabled" ${f.enabled ? 'checked' : ''}><span>啟用</span></label>
+          <button class="danger" data-act="retranslate" title="所有文章(含已翻)重翻一次,套用目前的模型/prompt/抓全文設定">全部重譯</button>
           <div class="edit-actions">
             <button class="primary" data-act="save">儲存</button>
             <button class="ghost" data-act="cancel">取消</button>
@@ -267,6 +268,12 @@ $('#feed-list').addEventListener('click', async (e) => {
       btn.textContent = '重翻中…'; btn.disabled = true;
       const r = await api('POST', `/api/feeds/${id}/retry-errors`);
       toast(`重翻 ${r.reset} 篇:成功 ${r.translated}、失敗 ${r.failed}`);
+      loadFeeds();
+    } else if (act === 'retranslate') {
+      if (!confirm('把這個 feed 的所有文章(含已翻)全部重翻一次?\n會重新花費 token（Gemini 引擎）。')) return;
+      btn.textContent = '重譯中…'; btn.disabled = true;
+      const r = await api('POST', `/api/feeds/${id}/retranslate`);
+      toast(`全部重譯 ${r.reset} 篇:成功 ${r.translated}、失敗 ${r.failed}`);
       loadFeeds();
     } else if (act === 'delete') {
       if (!confirm('確定刪除這個 feed 及其所有文章?')) return;

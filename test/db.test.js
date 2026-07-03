@@ -142,6 +142,16 @@ describe('entries DAO — 去重是核心', () => {
     expect(ctx.entries.getByGuid(feedId, 'g1').translation_status).toBe('pending');
     expect(ctx.entries.getByGuid(feedId, 'g2').translation_status).toBe('done');
   });
+
+  it('resetAllToPending 把 done + error 全部重設(整 feed 重譯)', () => {
+    const a = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1' }).entry;
+    const b = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g2' }).entry;
+    ctx.entries.markDone(a.id, {});
+    ctx.entries.markError(b.id, 'x');
+    const n = ctx.entries.resetAllToPending(feedId);
+    expect(n).toBe(2);
+    expect(ctx.entries.pendingByFeed(feedId)).toHaveLength(2);
+  });
 });
 
 describe('usage DAO', () => {

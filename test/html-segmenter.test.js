@@ -1,87 +1,105 @@
-// html-segmenter 測試(離線)——防漏譯的核心不變量。
+// html-segmenter 測試(離線)—— block + 佔位符切段。
 //
 // 訊號層次:
-//   ✓ 段數不變量:texts 段數 = 可翻文字節點數;reassemble 段數不符會丟錯
-//   ✓ 結構保留:圖片 / 連結 / 標籤在回填後原樣存在
-//   ✓ 純空白 / 純標點節點不進 texts、原樣保留
-//   ✓ 前後空白保留(排版間距不破)
-//   ✓ 跳過 script/style/pre/code 內文字
-//   ✗ 不驗:真實翻譯品質(那在 translate-entry 整合測試)
+//   ✓ 葉子區塊為單位;inline → 配對佔位符 ⟦N⟧…⟦/N⟧、原子(img)→ ⟦*N⟧
+//   ✓ 回填還原 tag + 屬性(連結 href / 巢狀 inline);段數不變量
+//   ✓ 防禦式回填:LLM 弄壞標記不崩、空譯文保留原文
+//   ✓ 跳過 script/style/pre;圖片保留
 import { describe, it, expect } from 'vitest';
 import { segmentHtml } from '../src/pipeline/html-segmenter.js';
 
-// 假翻譯:每段前面加「譯:」,方便驗證回填位置正確
-const fakeTranslate = (texts) => texts.map((t) => `譯:${t}`);
+// 假翻譯:原樣回傳(保留佔位符)→ 驗證回填能重建原結構
+const identity = (texts) => texts.slice();
 
-describe('segmentHtml 段數不變量', () => {
-  it('多段落 → 各自成段', () => {
+describe('block 切段:每個葉子區塊一段', () => {
+  it('多段落 → 各自成段(無 inline 則無佔位符)', () => {
     const { texts } = segmentHtml('<p>First paragraph.</p><p>Second paragraph.</p>');
     expect(texts).toEqual(['First paragraph.', 'Second paragraph.']);
   });
 
-  it('reassemble 段數不符 → 丟錯(不變量被破壞)', () => {
+  it('reassemble 段數不符 → 丟錯', () => {
     const { reassemble } = segmentHtml('<p>a</p><p>b</p>');
     expect(() => reassemble(['只有一段'])).toThrow(/段數不符/);
   });
 
-  it('回填後段數與位置正確', () => {
+  it('整段翻譯回填(identity 還原原文)', () => {
     const { texts, reassemble } = segmentHtml('<p>Hello</p><p>World</p>');
-    const html = reassemble(fakeTranslate(texts));
-    expect(html).toBe('<p>譯:Hello</p><p>譯:World</p>');
+    expect(reassemble(identity(texts))).toBe('<p>Hello</p><p>World</p>');
   });
 });
 
-describe('結構保留(圖片 / 連結 / 標籤)', () => {
-  it('圖片在回填後原樣存在', () => {
-    const src = '<p>Look at this photo:</p><figure><img src="https://x.com/a.jpg" alt="cat"></figure>';
-    const { texts, reassemble } = segmentHtml(src);
-    const html = reassemble(fakeTranslate(texts));
-    expect(html).toContain('<img src="https://x.com/a.jpg" alt="cat">');
-    expect(html).toContain('譯:Look at this photo:');
+describe('inline 佔位符', () => {
+  it('連結 + 巢狀粗體 → 單段含配對佔位符', () => {
+    const { texts, reassemble } = segmentHtml('<p>Visit <a href="https://ex.com">our <b>site</b></a> today.</p>');
+    expect(texts).toEqual(['Visit ⟦0⟧our ⟦1⟧site⟦/1⟧⟦/0⟧ today.']); // 整句一段,語序完整
+    // identity 回填 → 還原 tag + href + 巢狀 <b>
+    expect(reassemble(identity(texts))).toBe('<p>Visit <a href="https://ex.com">our <b>site</b></a> today.</p>');
   });
 
-  it('段落內的連結與粗體:文字被切段但元素與屬性保留', () => {
-    const src = '<p>Visit <a href="https://ex.com">our <b>site</b></a> today.</p>';
-    const { texts, reassemble } = segmentHtml(src);
-    // 文字節點:'Visit '、'our '、'site'、' today.' → 4 段(空白邊界被 trim 進 core 外)
-    expect(texts).toEqual(['Visit', 'our', 'site', 'today.']);
-    const html = reassemble(fakeTranslate(texts));
-    expect(html).toContain('href="https://ex.com"');
-    expect(html).toContain('<b>譯:site</b>');
+  it('翻譯後語序改變 + 佔位符保留 → 連結位置跟著換', () => {
+    const { texts, reassemble } = segmentHtml('<p>Visit <a href="https://ex.com">site</a> now.</p>');
+    expect(texts).toEqual(['Visit ⟦0⟧site⟦/0⟧ now.']);
+    // 模擬中文語序:把連結移到後面
+    const html = reassemble(['現在造訪⟦0⟧網站⟦/0⟧。']);
+    expect(html).toBe('<p>現在造訪<a href="https://ex.com">網站</a>。</p>');
   });
 
-  it('前後空白保留,排版間距不破', () => {
-    const { texts, reassemble } = segmentHtml('<p>Hello <em>world</em>!</p>');
-    // 'Hello'(後接空白)、'world'、'!' → '!' 無字母數字?'!' 不含 \p{L}\p{N} → 不翻
-    expect(texts).toEqual(['Hello', 'world']);
-    const html = reassemble(texts.map((t) => `[${t}]`));
-    // 'Hello ' 的尾空白要保留 → '[Hello] '
-    expect(html).toBe('<p>[Hello] <em>[world]</em>!</p>');
+  it('段內圖片 → 原子佔位符,回填保留 <img> 與屬性', () => {
+    const { texts, reassemble } = segmentHtml('<p>See <img src="https://x.com/p.jpg" alt="pic"> here.</p>');
+    expect(texts).toEqual(['See ⟦*0⟧ here.']);
+    const html = reassemble(['看這裡 ⟦*0⟧。']);
+    expect(html).toContain('<img src="https://x.com/p.jpg" alt="pic">');
+    expect(html).toContain('看這裡');
   });
 });
 
-describe('不翻的節點', () => {
-  it('純標點 / 純符號節點不進 texts,原樣保留', () => {
-    const { texts, reassemble } = segmentHtml('<p>A</p><p> · </p><p>B</p>');
+describe('結構保留 / 跳過', () => {
+  it('figure 內純圖片(無文字)不成段,原樣保留', () => {
+    const { texts, reassemble } = segmentHtml('<p>Look:</p><figure><img src="https://x.com/a.jpg"></figure>');
+    expect(texts).toEqual(['Look:']); // 只有 <p> 是翻譯單位
+    const html = reassemble(['看:']);
+    expect(html).toContain('<img src="https://x.com/a.jpg">');
+    expect(html).toContain('<p>看:</p>');
+  });
+
+  it('script / style / pre / code 內文字不翻', () => {
+    const { texts } = segmentHtml('<p>Real.</p><script>var x=1</script><pre>code</pre>');
+    expect(texts).toEqual(['Real.']);
+  });
+
+  it('巢狀容器 → 遞迴取葉子區塊', () => {
+    const { texts } = segmentHtml('<div><section><p>A</p><p>B</p></section></div>');
     expect(texts).toEqual(['A', 'B']);
-    const html = reassemble(fakeTranslate(texts));
-    expect(html).toContain('<p> · </p>'); // 中間分隔符原樣
   });
 
-  it('script / style / code / pre 內文字不翻', () => {
-    const src = '<p>Real text.</p><script>var x = "not translated";</script><pre>code block</pre>';
-    const { texts } = segmentHtml(src);
-    expect(texts).toEqual(['Real text.']);
+  it('list 每個 li 一段', () => {
+    const { texts } = segmentHtml('<ul><li>one</li><li>two</li></ul>');
+    expect(texts).toEqual(['one', 'two']);
   });
 
-  it('空 HTML → 空段', () => {
+  it('空 / 純空白 → 無段', () => {
     expect(segmentHtml('').texts).toEqual([]);
     expect(segmentHtml('   ').texts).toEqual([]);
+    expect(segmentHtml('<p>  </p>').texts).toEqual([]);
+  });
+});
+
+describe('防禦式回填', () => {
+  it('空譯文 → 保留原文', () => {
+    const { reassemble } = segmentHtml('<p>keep me</p>');
+    expect(reassemble([undefined])).toBe('<p>keep me</p>');
   });
 
-  it('譯文為空時保留原文,避免內容消失', () => {
-    const { texts, reassemble } = segmentHtml('<p>keep me</p>');
-    const html = reassemble([undefined]);
-    expect(html).toBe('<p>keep me</p>');
+  it('LLM 漏掉關標記 → 不崩,段末補關', () => {
+    const { texts, reassemble } = segmentHtml('<p>a <b>bold</b> c</p>');
+    // texts = ['a ⟦0⟧bold⟦/0⟧ c'];漏掉 ⟦/0⟧
+    const html = reassemble(['a ⟦0⟧粗體 c']);
+    expect(html).toContain('<b>粗體 c</b>'); // <b> 在段末被補關,不 throw
+    expect(() => reassemble(['a ⟦0⟧粗體 c'])).not.toThrow();
+  });
+
+  it('壞掉的原子索引 → 略過不崩', () => {
+    const { reassemble } = segmentHtml('<p>x <img src="i.jpg"> y</p>');
+    expect(() => reassemble(['x ⟦*9⟧ y'])).not.toThrow(); // 索引 9 不存在 → 略過
   });
 });

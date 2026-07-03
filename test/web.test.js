@@ -317,6 +317,15 @@ describe('重翻失敗文章', () => {
     const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retry-errors` })).json();
     expect(r).toMatchObject({ reset: 0, translated: 0 });
   });
+
+  it('整 feed 重譯:已翻的也重設 pending 再翻', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/rt' } })).json();
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 產生 1 篇 done
+    expect(ctx.entries.listByFeed(f.id)[0].translation_status).toBe('done');
+    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retranslate` })).json();
+    expect(r.reset).toBe(1);
+    expect(r.translated).toBe(1); // 重設後又翻一次
+  });
 });
 
 describe('引擎欄位', () => {

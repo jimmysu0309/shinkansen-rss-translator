@@ -233,6 +233,20 @@ export function buildServer(ctx, opts = {}) {
     return { reset, translated: r.translated, failed: r.failed };
   });
 
+  // 整 feed 重譯:所有文章(含已翻)重設 pending 再翻一次(改模型/prompt/抓全文後套用)
+  app.post('/api/feeds/:id/retranslate', async (req, reply) => {
+    const feed = ctx.feeds.get(Number(req.params.id));
+    if (!feed) return reply.code(404).send({ error: 'feed 不存在' });
+    const engine = feed.engine || ctx.settings.get('engine', 'gemini');
+    if (engine === 'gemini' && !apiKey()) {
+      return reply.code(400).send({ error: '缺 Gemini API 金鑰,請到設定頁填入或改用 Google 翻譯' });
+    }
+    const reset = ctx.entries.resetAllToPending(feed.id);
+    ctx.logs.append({ level: 'info', category: 'refresh', message: `整 feed 重譯:${feed.title || feed.source_url}(${reset} 篇)`, feedId: feed.id });
+    const r = await processFeed(ctx, feed, { apiKey: apiKey(), ...processDeps });
+    return { reset, translated: r.translated, failed: r.failed };
+  });
+
   // ─── 用量 API ───
   const usageRange = (q) => ({
     from: Number(q.from) || 0,
