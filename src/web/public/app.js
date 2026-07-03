@@ -115,6 +115,10 @@ async function loadSettings() {
   $('#s-chars').value = s.maxCharsPerBatch ?? DEFAULTS.maxCharsPerBatch;
   $('#s-temp').value = s.temperature ?? DEFAULTS.temperature;
   $('#s-logdays').value = s.logRetentionDays ?? DEFAULTS.logRetentionDays;
+  // 更新頻率下拉
+  const pc = $('#s-pollcron');
+  pc.innerHTML = DEFAULTS.pollCronOptions.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+  pc.value = s.pollCron ?? DEFAULTS.pollCron;
   $('#s-prompt').value = s.systemPrompt ?? DEFAULTS.systemPrompt;
   renderPricingRows(s.modelPricingOverrides || {});
   initLogFilters();
@@ -134,6 +138,7 @@ $('#save-settings').addEventListener('click', async () => {
       maxCharsPerBatch: Number($('#s-chars').value),
       temperature: Number($('#s-temp').value),
       logRetentionDays: Number($('#s-logdays').value),
+      pollCron: $('#s-pollcron').value,
       systemPrompt: $('#s-prompt').value,
       forbiddenTerms: textToTerms($('#s-forbidden').value),
       modelPricingOverrides: collectPricingOverrides(),

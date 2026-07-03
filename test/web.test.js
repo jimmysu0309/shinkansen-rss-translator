@@ -62,17 +62,27 @@ describe('設定 API', () => {
     expect(body.settings.apiKey).toBeUndefined();
   });
 
-  it('測試金鑰:沒金鑰 → ok:false(不需網路)', async () => {
-    // setup-env 會把 .env 的 key 載進 process.env,這裡暫時清掉以測「完全無金鑰」路徑
-    const saved = process.env.GEMINI_API_KEY;
-    delete process.env.GEMINI_API_KEY;
-    try {
-      const noKeyApp = buildServer(createDb(':memory:'), {}); // 無 apiKey
-      const res = await noKeyApp.inject({ method: 'POST', url: '/api/test-key', payload: {} });
-      expect(res.json()).toEqual({ ok: false, error: '沒有金鑰可測試' });
-    } finally {
-      if (saved !== undefined) process.env.GEMINI_API_KEY = saved;
-    }
+  it('測試金鑰:沒金鑰 → ok:false(金鑰只來自設定,不讀 env)', async () => {
+    const noKeyApp = buildServer(createDb(':memory:'), {}); // 無 opts.apiKey、settings 也沒 apiKey
+    const res = await noKeyApp.inject({ method: 'POST', url: '/api/test-key', payload: {} });
+    expect(res.json()).toEqual({ ok: false, error: '沒有金鑰可測試' });
+  });
+});
+
+describe('更新頻率(pollCron)', () => {
+  it('defaults 提供 pollCron 預設與選項', async () => {
+    const d = (await app.inject({ method: 'GET', url: '/api/defaults' })).json();
+    expect(d.pollCron).toBe('*/15 * * * *');
+    expect(d.pollCronOptions.map(o => o.value)).toContain('0 * * * *');
+    expect(d.pollCronOptions.some(o => o.value === '')).toBe(true); // 關閉選項
+  });
+
+  it('PUT pollCron 會存起來並觸發 onPollCronChange', async () => {
+    let changedTo = null;
+    const a = buildServer(createDb(':memory:'), { onPollCronChange: (c) => { changedTo = c; } });
+    const res = await a.inject({ method: 'PUT', url: '/api/settings', payload: { pollCron: '0 */2 * * *' } });
+    expect(res.json().pollCron).toBe('0 */2 * * *');
+    expect(changedTo).toBe('0 */2 * * *'); // 即時重排回呼被呼叫
   });
 });
 

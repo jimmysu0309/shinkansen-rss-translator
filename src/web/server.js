@@ -21,6 +21,18 @@ import { feedsToOpml, parseOpml } from '../pipeline/opml.js';
 // log 保留天數預設
 export const DEFAULT_LOG_RETENTION_DAYS = 7;
 
+// 更新頻率(排程 cron)—— 前端下拉選項,值為 cron 字串,空字串 = 關閉
+export const DEFAULT_POLL_CRON = '*/15 * * * *';
+export const POLL_CRON_OPTIONS = [
+  { value: '*/5 * * * *', label: '每 5 分鐘' },
+  { value: '*/15 * * * *', label: '每 15 分鐘' },
+  { value: '*/30 * * * *', label: '每 30 分鐘' },
+  { value: '0 * * * *', label: '每小時' },
+  { value: '0 */2 * * *', label: '每 2 小時' },
+  { value: '0 */6 * * *', label: '每 6 小時' },
+  { value: '', label: '關閉自動更新' },
+];
+
 // 前端下拉可選的模型(對應現有 rssbox 的 Lite / Flash 兩檔)
 export const SELECTABLE_MODELS = [
   { id: 'gemini-3.1-flash-lite', label: 'Lite（gemini-3.1-flash-lite）— 便宜' },
@@ -39,7 +51,8 @@ function csvCell(v) {
 export function buildServer(ctx, opts = {}) {
   const app = Fastify({ logger: opts.logger ?? false });
   // 有效金鑰:先看 settings(webui 填的),再看啟動 opts / 環境變數
-  const apiKey = () => ctx.settings.get('apiKey', '') || opts.apiKey || process.env.GEMINI_API_KEY || '';
+  // 金鑰只從 web 設定(SQLite)取;不再讀 .env / 環境變數。opts.apiKey 供測試注入。
+  const apiKey = () => ctx.settings.get('apiKey', '') || opts.apiKey || '';
   // processDeps:測試可注入 fake fetch/translate;正式為 undefined → 用真實實作
   const processDeps = opts.processDeps || {};
 
@@ -67,6 +80,8 @@ export function buildServer(ctx, opts = {}) {
     logRetentionDays: DEFAULT_LOG_RETENTION_DAYS,
     logLevels: ['info', 'warn', 'error'],
     logCategories: ['fetch', 'translate', 'refresh', 'opml', 'system'],
+    pollCron: DEFAULT_POLL_CRON,
+    pollCronOptions: POLL_CRON_OPTIONS,
     modelPricing: MODEL_PRICING, // 內建計價表(前端 placeholder 用)
     hasApiKey: !!apiKey(), // 前端顯示金鑰是否已設(不回傳 key 本身)
   }));
@@ -86,6 +101,10 @@ export function buildServer(ctx, opts = {}) {
       // apiKey 空字串代表「不變更」,不覆寫既有金鑰
       if (SECRET_KEYS.has(k) && (v === '' || v == null)) continue;
       ctx.settings.set(k, v);
+    }
+    // 更新頻率有變 → 通知 entry 重新排程(即時生效,免重啟)
+    if ('pollCron' in body && typeof opts.onPollCronChange === 'function') {
+      opts.onPollCronChange(ctx.settings.get('pollCron', DEFAULT_POLL_CRON));
     }
     return publicSettings();
   });

@@ -72,7 +72,7 @@
           <input type="password" id="s-apikey" placeholder="AQ.… 或 AIza…（留空 = 不變更）" autocomplete="off">
           <button type="button" id="test-key" class="ghost">測試</button>
         </div>
-        <p class="hint">金鑰只存在伺服器本機的 SQLite，不會外洩到瀏覽器。也可改放伺服器 <code>.env</code> 的 <code>GEMINI_API_KEY</code>。用 Google 翻譯引擎則不需金鑰。</p>
+        <p class="hint">金鑰只存在伺服器本機的 SQLite，不會外洩到瀏覽器。</p>
       </div>
 
       <div class="card">
@@ -94,6 +94,9 @@
           </label>
           <label>紀錄保留天數
             <input type="number" id="s-logdays" min="1" max="365">
+          </label>
+          <label>更新頻率<small class="hint-inline">多久自動抓取+翻譯所有 feed</small>
+            <select id="s-pollcron"></select>
           </label>
         </div>
       </div>

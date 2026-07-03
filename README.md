@@ -71,16 +71,15 @@ git submodule update --init
 # 2. 安裝依賴
 npm install
 
-# 3. 設定金鑰
-cp .env.example .env
-#   編輯 .env 填入 GEMINI_API_KEY(用 Google 翻譯引擎則可留空)
+# 3. 基礎設定(可選)
+cp .env.example .env      # 只設 PORT / 初始更新頻率;金鑰在 web 介面填
 
 # 4. 啟動
 npm start
 #   → http://localhost:8088
 ```
 
-打開瀏覽器到 `http://localhost:8088`，在「Feeds」分頁貼上一個 RSS 網址、按「新增 Feed」，再按「刷新」即開始翻譯。
+打開瀏覽器到 `http://localhost:8088`，先到「設定」分頁填入 **Gemini API 金鑰**(按「測試」驗證),再到「Feeds」分頁貼 RSS 網址新增、刷新即開始翻譯。用免費 Google 翻譯引擎則不需金鑰。
 
 跑測試：
 
@@ -95,10 +94,11 @@ npm test          # 112 tests;有設 GEMINI_API_KEY 才會跑真打 API 的整�
 ### A. 一般 Docker 主機
 
 ```bash
-cp .env.example .env      # 填 GEMINI_API_KEY
+cp .env.example .env      # 只設埠 / 初始頻率
 docker compose up -d --build
 ```
 
+- 啟動後開 web 介面到「設定」頁填 **Gemini 金鑰**(按「測試」驗證)。
 - Web 介面：`http://<主機>:8448`（compose 綁 `127.0.0.1:8448`；要對外請自行加反向代理 / Tailscale）
 - 資料庫：持久化在 `./data`（掛載進容器 `/app/data`）
 - 改埠：在 `.env` 加 `WEB_PORT=xxxx`
@@ -115,11 +115,11 @@ afu 上其他 RSS 服務都採「獨立 compose project、綁 127.0.0.1、併入
 git clone --recurse-submodules <repo-url> C:\miniflux\shinkansen-rss
 ```
 
-**2. 設定金鑰**
+**2. 基礎設定**
 
 ```
 copy .env.example .env
-# 編輯 .env 填 GEMINI_API_KEY
+# 只設 PORT / 初始更新頻率;Gemini 金鑰啟動後在 web 介面「設定」頁填
 ```
 
 **3. 建置並啟動（併入 Miniflux 網路）**
@@ -166,21 +166,21 @@ docker compose -f docker-compose.yml -f docker-compose.afu.yml up -d --build
 
 ## 設定說明
 
-### 環境變數（`.env`）
+### 環境變數（`.env`，可選）
 
 | 變數 | 說明 | 預設 |
 |---|---|---|
-| `GEMINI_API_KEY` | Gemini 金鑰（Gemini 引擎必填） | — |
 | `PORT` | 容器內監聽埠 | 8088 |
-| `POLL_CRON` | 自動排程 cron（留空 = 不排程） | `*/15 * * * *` |
+| `POLL_CRON` | **首次啟動**的預設更新頻率(DB 未設過時採用;之後以設定頁為準) | `*/15 * * * *` |
 | `DB_PATH` | SQLite 路徑 | `data/shinkansen-feed.sqlite` |
 
-金鑰優先序：**web 設定頁 > `.env` / 環境變數**。設定頁填的金鑰存在伺服器本機 SQLite，不會外洩到瀏覽器、也不進 git。
+> **Gemini 金鑰不再放 `.env`**。一律在 web 介面「設定」頁輸入,存在伺服器本機 SQLite(不外洩到瀏覽器、不進 git)。
 
 ### web「設定」分頁
 
-- **API 金鑰**：可直接填 + 「測試」按鈕（打 Gemini models 清單驗證）。
-- **預設引擎 / 模型**：Gemini（Lite / Flash）或 Google 翻譯；可逐 feed 覆寫。
+- **API 金鑰**：在此輸入 + 「測試」按鈕（打 Gemini models 清單驗證）。**這是唯一設定金鑰的地方**。
+- **預設引擎 / 模型**：Gemini（Lite / Flash）或 Google 翻譯;可逐 feed 覆寫。
+- **更新頻率**：多久自動抓取+翻譯所有 feed(每 5 分～每 6 小時 / 關閉),改完即時生效。
 - **每批段數 / 字元上限**：分批翻譯的門檻（段數預設 50）。
 - **Gemini Temperature**：0 最穩定、越高越有創意（預設 1）。
 - **紀錄保留天數**：log 保留幾天（預設 7）。
