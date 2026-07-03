@@ -122,13 +122,54 @@ function collectUnits(root, units) {
   }
 }
 
+// ── textnode 模式:逐「文字節點」切段(無佔位符)──
+// 給不吃佔位符的引擎(Google 翻譯):純文字進出,結構靠只換文字節點保留。
+// 代價:跨 inline 的句子被切碎、少整句語境;但 Google 品質本就普通,可接受。
+const TN_SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'KBD', 'SAMP']);
+function collectTextNodes(root, out) {
+  for (const node of root.childNodes) {
+    if (node.nodeType === TEXT_NODE) {
+      if (hasTranslatable(node.nodeValue)) out.push(node);
+    } else if (node.nodeType === ELEMENT_NODE && !TN_SKIP.has(node.tagName)) {
+      collectTextNodes(node, out);
+    }
+  }
+}
+function segmentTextNodes(body) {
+  const nodes = [];
+  collectTextNodes(body, nodes);
+  const meta = nodes.map((n) => {
+    const raw = n.nodeValue;
+    const lead = raw.match(/^\s*/)[0];
+    const trail = raw.match(/\s*$/)[0];
+    return { lead, trail, core: raw.slice(lead.length, raw.length - trail.length) };
+  });
+  const texts = meta.map((m) => m.core);
+  function reassemble(translations) {
+    if (!Array.isArray(translations) || translations.length !== nodes.length) {
+      throw new Error(`html-segmenter 段數不符:輸入 ${nodes.length} 段、譯文 ${translations?.length} 段`);
+    }
+    for (let i = 0; i < nodes.length; i++) {
+      const t = translations[i];
+      const core = (t === undefined || t === null || t === '') ? texts[i] : t;
+      nodes[i].nodeValue = meta[i].lead + core + meta[i].trail;
+    }
+    return body.innerHTML;
+  }
+  return { texts, reassemble };
+}
+
 /**
  * 切段。回傳 { texts, reassemble }。
  * @param {string} html 文章內容 HTML(片段即可)
+ * @param {{mode?: 'placeholder'|'textnode'}} [opts]
+ *   placeholder(預設,給 Gemini):block + ⟦⟧ 佔位符,整句語境、語序準。
+ *   textnode(給 Google 翻譯):逐文字節點、無標記,避免純文字 MT 弄壞佔位符。
  */
-export function segmentHtml(html) {
+export function segmentHtml(html, opts = {}) {
   const { document } = parseHTML(`<!DOCTYPE html><html><body>${html || ''}</body></html>`);
   const body = document.body;
+  if (opts.mode === 'textnode') return segmentTextNodes(body);
   const units = [];
   collectUnits(body, units);
 

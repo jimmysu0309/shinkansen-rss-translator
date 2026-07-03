@@ -84,6 +84,23 @@ describe('結構保留 / 跳過', () => {
   });
 });
 
+describe('textnode 模式(給 Google 翻譯,無佔位符)', () => {
+  it('逐文字節點切段,不含任何 ⟦⟧ 標記', () => {
+    const { texts, reassemble } = segmentHtml('<p>Visit <a href="https://ex.com">site</a> now.</p>', { mode: 'textnode' });
+    expect(texts).toEqual(['Visit', 'site', 'now.']); // 文字節點各自成段
+    expect(texts.join('')).not.toContain('⟦');         // 純文字,無標記
+    const html = reassemble(['造訪', '網站', '現在。']);
+    expect(html).toContain('href="https://ex.com"');    // 結構仍保留
+    expect(html).toContain('網站');
+  });
+
+  it('圖片保留(不動元素)', () => {
+    const { texts, reassemble } = segmentHtml('<p>See <img src="x.jpg"> here</p>', { mode: 'textnode' });
+    const html = reassemble(texts.map((t) => '譯' + t));
+    expect(html).toContain('<img src="x.jpg">');
+  });
+});
+
 describe('防禦式回填', () => {
   it('空譯文 → 保留原文', () => {
     const { reassemble } = segmentHtml('<p>keep me</p>');

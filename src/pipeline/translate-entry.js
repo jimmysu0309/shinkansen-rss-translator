@@ -24,7 +24,9 @@ export async function translateEntry(entry, opts = {}) {
   const title = entry.title || '';
   const hasTitle = !!title.trim();
 
-  const { texts, reassemble } = segmentHtml(entry.contentHtml || '');
+  // Google 翻譯是純文字 MT,不吃 ⟦⟧ 佔位符 → 用 textnode 模式;Gemini 用 block+佔位符
+  const mode = opts.engine === 'google' ? 'textnode' : 'placeholder';
+  const { texts, reassemble } = segmentHtml(entry.contentHtml || '', { mode });
   const batch = hasTitle ? [title, ...texts] : texts;
 
   if (batch.length === 0) {
