@@ -256,7 +256,7 @@ $('#feed-list').addEventListener('click', async (e) => {
   const act = btn.dataset.act;
   try {
     if (act === 'copy') {
-      await navigator.clipboard.writeText($('input', item).value);
+      await copyText($('.rss-row input', item).value); // 鎖定 RSS 那格,別抓到編輯表單的 input
       toast('已複製 RSS 網址');
     } else if (act === 'refresh') {
       btn.textContent = '刷新中…'; btn.disabled = true;
@@ -524,6 +524,22 @@ function fmtTime(ts) { const d = new Date(Number(ts) || 0); return d.toLocaleStr
 function fmt(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(n); }
 function fmtUsd(n) { n = Number(n) || 0; if (n === 0) return '$0'; if (n < 0.01) return '$' + n.toFixed(4); if (n < 1) return '$' + n.toFixed(3); return '$' + n.toFixed(2); }
 function engineLabel(id) { return id === 'google' ? 'Google 翻譯' : id === 'gemini' ? 'Gemini' : '繼承全域'; }
+
+// 複製文字:優先 clipboard API(需 secure context),失敗則用暫時 textarea 後備
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch { /* 落到後備 */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.top = '-9999px';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try { document.execCommand('copy'); } finally { ta.remove(); }
+}
 
 // 啟動
 (async () => {
