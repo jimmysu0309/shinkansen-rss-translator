@@ -239,4 +239,6 @@ npm run translate -- "Hello, world."   # CLI 冒煙翻譯
 
 ## 授權
 
-翻譯引擎來自 [Shinkansen](https://github.com/jimmysu0309/shinkansen)。本專案沿用其授權條款。
+本專案採用 [Elastic License 2.0 (ELv2)](LICENSE) 授權(比照翻譯引擎來源 [Shinkansen](https://github.com/jimmysu0309/shinkansen))。
+
+白話來說:你可以自由查看原始碼、學習、修改、自己架來用,但**不能把本服務(或改寫版本)包成託管/管理式服務拿去賣**。完整條款請見 [LICENSE](LICENSE) 檔案。

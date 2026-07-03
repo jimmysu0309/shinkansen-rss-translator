@@ -79,6 +79,10 @@ button.danger { background: transparent; color: var(--danger); border-color: tra
 button.danger:hover { text-decoration: underline; }
 
 .actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+
+/* 授權說明(設定頁底) */
+.license-note { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.license-note a { color: var(--accent); text-decoration: underline; }
 .save-status { color: var(--ok); font-size: 12px; }
 
 /* ─── 提示 ─── */
