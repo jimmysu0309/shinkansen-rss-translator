@@ -1,6 +1,6 @@
 # 🚄 Shinkansen RSS Translator
 
-把任何 RSS/Atom feed **翻成道地台灣繁體中文**,再輸出成新的 feed 給閱讀器（Miniflux、Readwise Reader…）訂閱。
+把任何 RSS/Atom feed **翻成道地台灣繁體中文**，再輸出成新的 feed 給閱讀器（Miniflux、Readwise Reader…）訂閱。
 
 翻譯引擎直接沿用瀏覽器擴充功能 **[Shinkansen](https://github.com/jimmysu0309/shinkansen)** 的 `lib/`（以 git submodule 釘版本引用，不改邏輯），因此繼承它調校過的台灣繁中 prompt、禁用詞黑名單、抗漏譯的分段對映與 token 計價。外面包一層 Node 伺服器負責抓取、去重、排程、輸出與 web 介面。
 
@@ -79,7 +79,7 @@ npm start
 #   → http://localhost:8088
 ```
 
-打開瀏覽器到 `http://localhost:8088`，先到「設定」分頁填入 **Gemini API 金鑰**(按「測試」驗證),再到「Feeds」分頁貼 RSS 網址新增、刷新即開始翻譯。用免費 Google 翻譯引擎則不需金鑰。
+打開瀏覽器到 `http://localhost:8088`，先到「設定」分頁填入 **Gemini API 金鑰**（按「測試」驗證），再到「Feeds」分頁貼 RSS 網址新增、刷新即開始翻譯。用免費 Google 翻譯引擎則不需金鑰。
 
 跑測試：
 
@@ -98,26 +98,26 @@ cp .env.example .env      # 只設埠 / 初始頻率
 docker compose up -d --build
 ```
 
-- 啟動後開 web 介面到「設定」頁填 **Gemini 金鑰**(按「測試」驗證)。
+- 啟動後開 web 介面到「設定」頁填 **Gemini 金鑰**（按「測試」驗證）。
 - Web 介面：`http://<主機>:8448`（compose 綁 `127.0.0.1:8448`；要對外請自行加反向代理 / Tailscale）
 - 資料庫：持久化在 `./data`（掛載進容器 `/app/data`）
 - 改埠：在 `.env` 加 `WEB_PORT=xxxx`
 
 ### B. 併入現有 Miniflux 堆疊（選配）
 
-若你已有一套 Miniflux 跑在 Docker,想讓 Miniflux 直接用內部網路抓譯後 feed:疊加 `docker-compose.miniflux.yml`,把本服務接上 Miniflux 所在的外部網路(預設 `miniflux_default`):
+若你已有一套 Miniflux 跑在 Docker，想讓 Miniflux 直接用內部網路抓譯後 feed：疊加 `docker-compose.miniflux.yml`，把本服務接上 Miniflux 所在的外部網路（預設 `miniflux_default`）：
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.miniflux.yml up -d --build
 ```
 
-之後 Miniflux 容器即可用內部 DNS 訂閱(需 Miniflux 開 `FETCHER_ALLOW_PRIVATE_NETWORKS=1`):
+之後 Miniflux 容器即可用內部 DNS 訂閱（需 Miniflux 開 `FETCHER_ALLOW_PRIVATE_NETWORKS=1`）：
 
 ```
 http://shinkansen-rss:8088/rss/<feedId>
 ```
 
-> 介面本身不設密碼,建議只綁 `127.0.0.1`,對外存取自行用反向代理 / Tailscale / VPN 限制。
+> 介面本身不設密碼，建議只綁 `127.0.0.1`，對外存取自行用反向代理 / Tailscale / VPN 限制。
 
 ---
 
@@ -128,16 +128,16 @@ http://shinkansen-rss:8088/rss/<feedId>
 | 變數 | 說明 | 預設 |
 |---|---|---|
 | `PORT` | 容器內監聽埠 | 8088 |
-| `POLL_CRON` | **首次啟動**的預設更新頻率(DB 未設過時採用;之後以設定頁為準) | `*/15 * * * *` |
+| `POLL_CRON` | **首次啟動**的預設更新頻率（DB 未設過時採用；之後以設定頁為準） | `*/15 * * * *` |
 | `DB_PATH` | SQLite 路徑 | `data/shinkansen-feed.sqlite` |
 
-> **Gemini 金鑰不再放 `.env`**。一律在 web 介面「設定」頁輸入,存在伺服器本機 SQLite(不外洩到瀏覽器、不進 git)。
+> **Gemini 金鑰不再放 `.env`**。一律在 web 介面「設定」頁輸入，存在伺服器本機 SQLite（不外洩到瀏覽器、不進 git）。
 
 ### web「設定」分頁
 
 - **API 金鑰**：在此輸入 + 「測試」按鈕（打 Gemini models 清單驗證）。**這是唯一設定金鑰的地方**。
-- **預設引擎 / 模型**：Gemini（Lite / Flash）或 Google 翻譯;可逐 feed 覆寫。
-- **更新頻率**：多久自動抓取+翻譯所有 feed(每 5 分～每 6 小時 / 關閉),改完即時生效。
+- **預設引擎 / 模型**：Gemini（Lite / Flash）或 Google 翻譯；可逐 feed 覆寫。
+- **更新頻率**：多久自動抓取+翻譯所有 feed（每 5 分～每 6 小時 / 關閉），改完即時生效。
 - **每批段數 / 字元上限**：分批翻譯的門檻（段數預設 50）。
 - **Gemini Temperature**：0 最穩定、越高越有創意（預設 1）。
 - **紀錄保留天數**：log 保留幾天（預設 7）。
@@ -173,6 +173,6 @@ docker compose start app
 
 ## 授權
 
-本專案採用 [Elastic License 2.0 (ELv2)](LICENSE) 授權(比照翻譯引擎來源 [Shinkansen](https://github.com/jimmysu0309/shinkansen))。
+本專案採用 [Elastic License 2.0 (ELv2)](LICENSE) 授權（比照翻譯引擎來源 [Shinkansen](https://github.com/jimmysu0309/shinkansen)）。
 
-白話來說:你可以自由查看原始碼、學習、修改、自己架來用,但**不能把本服務(或改寫版本)包成託管/管理式服務拿去賣**。完整條款請見 [LICENSE](LICENSE) 檔案。
+白話來說：你可以自由查看原始碼、學習、修改、自己架來用，但**不能把本服務（或改寫版本）包成託管/管理式服務拿去賣**。完整條款請見 [LICENSE](LICENSE) 檔案。
