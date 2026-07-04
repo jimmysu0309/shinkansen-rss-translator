@@ -89,9 +89,15 @@ npm test          # 112 tests;有設 GEMINI_API_KEY 才會跑真打 API 的整�
 
 ---
 
-## 部署指南（Docker）
+## 部署指南
 
-### A. 一般 Docker 主機
+### 最簡單：請 Claude Code 幫你部署（推薦）
+
+把這個專案網址交給 [Claude Code](https://claude.com/claude-code)（或其他 coding agent），請它「看這個專案，幫我部署」。它會讀 README 與 `docker-compose.yml`，幫你建立 `.env`、建置並啟動容器、把服務跑起來，並引導你到「設定」頁填 Gemini 金鑰、新增第一個 feed；日後要更新也可以請它 `git pull` 重新部署。
+
+想自己動手的話，以下是手動步驟。
+
+### 手動 A：一般 Docker 主機
 
 ```bash
 cp .env.example .env      # 只設埠 / 初始頻率
@@ -103,7 +109,7 @@ docker compose up -d --build
 - 資料庫：持久化在 `./data`（掛載進容器 `/app/data`）
 - 改埠：在 `.env` 加 `WEB_PORT=xxxx`
 
-### B. 併入現有 Miniflux 堆疊（選配）
+### 手動 B：併入現有 Miniflux 堆疊（選配）
 
 若你已有一套 Miniflux 跑在 Docker，想讓 Miniflux 直接用內部網路抓譯後 feed：疊加 `docker-compose.miniflux.yml`，把本服務接上 Miniflux 所在的外部網路（預設 `miniflux_default`）：
 
