@@ -18,3 +18,6 @@ test-results/
 
 # 個人協作指引,不進公開 repo
 CLAUDE.md
+
+# 家用/個人專屬文件(如 PLAN.md、家用部署),不進公開 repo
+docs/excluded/
