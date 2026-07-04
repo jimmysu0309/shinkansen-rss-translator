@@ -103,64 +103,21 @@ docker compose up -d --build
 - 資料庫：持久化在 `./data`（掛載進容器 `/app/data`）
 - 改埠：在 `.env` 加 `WEB_PORT=xxxx`
 
-### B. 部署到 afu（併入既有 Miniflux 堆疊）
+### B. 併入現有 Miniflux 堆疊（選配）
 
-afu 上其他 RSS 服務都採「獨立 compose project、綁 127.0.0.1、併入 `miniflux_default` 網路、對外走 Tailscale Serve」的模式，本服務照辦。
-
-**1. 放置程式碼**（例：`C:\miniflux\shinkansen-rss\`）
-
-連 submodule 一起帶過去。可在本機打包後傳，或在 afu 上 clone：
+若你已有一套 Miniflux 跑在 Docker,想讓 Miniflux 直接用內部網路抓譯後 feed:疊加 `docker-compose.afu.yml`,把本服務接上 Miniflux 所在的外部網路(預設 `miniflux_default`):
 
 ```bash
-git clone --recurse-submodules <repo-url> C:\miniflux\shinkansen-rss
-```
-
-**2. 基礎設定**
-
-```
-copy .env.example .env
-# 只設 PORT / 初始更新頻率;Gemini 金鑰啟動後在 web 介面「設定」頁填
-```
-
-**3. 建置並啟動（併入 Miniflux 網路）**
-
-```bash
-cd C:\miniflux\shinkansen-rss
 docker compose -f docker-compose.yml -f docker-compose.afu.yml up -d --build
 ```
 
-`docker-compose.afu.yml` 會把容器接上 `miniflux_default`，於是 Miniflux 容器能用內部 DNS 抓譯後 feed：
+之後 Miniflux 容器即可用內部 DNS 訂閱(需 Miniflux 開 `FETCHER_ALLOW_PRIVATE_NETWORKS=1`):
 
 ```
 http://shinkansen-rss:8088/rss/<feedId>
 ```
 
-> SSH 下若 `docker` 卡在 credential helper，見專案 memory「Windows Docker SSH 憑證繞過」的 no-op 繞法。
-
-**4. Web 介面對外（Tailscale Serve）**
-
-比照其他服務，挑一個未使用的埠（例 8448）：
-
-```bash
-tailscale serve --bg --https=8448 http://127.0.0.1:8448
-# 之後即可 https://afu.<tailnet>.ts.net:8448 存取(僅 tailnet 內)
-# 關閉:tailscale serve --https=8448 off
-```
-
-> **存取保護**：介面本身不設密碼，靠「只綁 127.0.0.1 ＋ Tailscale」限制在 tailnet 內。
-
-**5. 接進 Miniflux**
-
-- 逐條：在 web 介面每個 feed 卡片「複製」RSS 網址，貼進 Miniflux 訂閱。
-  - 內部抓取用 `http://shinkansen-rss:8088/rss/<id>`（穩、不經 Tailscale）。
-- 批次:用「匯出 OPML」下載，於 Miniflux「匯入 OPML」一次訂閱全部（xmlUrl 已是譯後網址）。
-
-**更新版本**
-
-```bash
-git pull && git submodule update --init
-docker compose -f docker-compose.yml -f docker-compose.afu.yml up -d --build
-```
+> 介面本身不設密碼,建議只綁 `127.0.0.1`,對外存取自行用反向代理 / Tailscale / VPN 限制。
 
 ---
 
@@ -213,7 +170,6 @@ cp data/shinkansen-feed.sqlite  <備份位置>
 docker compose start app
 ```
 
-（afu 上可把 `data/` 併進現有 RSS 堆疊的備份 zip。）
 
 ## 疑難排解
 
@@ -221,8 +177,7 @@ docker compose start app
 |---|---|
 | 譯文漏段 | 理論上被段數不變量擋住;若仍發生請開 issue 附來源 HTML |
 | Gemini 回「Thinking level is not supported」 | 用了舊模型;請用 gemini-3 系列（介面預設 Lite） |
-| Miniflux 抓不到內部 feed | 確認容器有併入 `miniflux_default`（用 afu 疊加 compose） |
-| `docker` 在 SSH 下卡住 | credential helper 問題,見 memory 的 no-op 繞法 |
+| Miniflux 抓不到內部 feed | 確認容器有併入 Miniflux 的網路(疊加 `docker-compose.afu.yml`)、且 Miniflux 開 `FETCHER_ALLOW_PRIVATE_NETWORKS=1` |
 | better-sqlite3 編譯失敗 | Dockerfile builder 階段已裝 python3/make/g++;本機請確認有編譯工具 |
 
 ## 開發
@@ -233,7 +188,7 @@ npm test               # vitest
 npm run translate -- "Hello, world."   # CLI 冒煙翻譯
 ```
 
-**專案鐵律**：每個功能都要有 test case；vendor 引擎（submodule）只去瀏覽器化、不改邏輯；HTML 切段回填的段數進出必須相等。詳見 `CLAUDE.md`。
+**專案鐵律**：每個功能都要有 test case；vendor 引擎（submodule）只去瀏覽器化、不改邏輯；HTML 切段回填的段數進出必須相等。
 
 **更新引擎**：更新 submodule 指向的 commit，再人工同步 `src/engine-adapters/` 的適配層。
 
