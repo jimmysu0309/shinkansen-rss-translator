@@ -28,6 +28,16 @@ const DEFAULTS = {
 const FEEDS = [{ id: 1, title: 'take.surf', source_url: 'https://take.surf/feed.atom', engine: 'gemini', model: 'gemini-3.1-flash-lite', enabled: 1, fetch_article: 0, category: '已翻譯' }];
 const FEED_DETAIL = { ...FEEDS[0], entries: [{ translation_status: 'done' }] };
 
+const USAGE = {
+  total: { cost: 0.07, calls: 25, input_tokens: 400, output_tokens: 130, cached_tokens: 0, cacheHitRate: 0 },
+  daily: [],
+  byFeed: [
+    { feed_id: 1, feed_title: 'Bravo', calls: 5, input_tokens: 100, output_tokens: 50, cached_tokens: 0, cost: 0.02 },
+    { feed_id: 2, feed_title: 'Alpha', calls: 20, input_tokens: 300, output_tokens: 80, cached_tokens: 0, cost: 0.05 },
+  ],
+  pending: 0,
+};
+
 function mockFetch(url) {
   const u = String(url);
   const json = (d) => Promise.resolve({ ok: true, headers: { get: () => 'application/json' }, json: () => Promise.resolve(d), text: () => Promise.resolve('') });
@@ -35,6 +45,8 @@ function mockFetch(url) {
   if (u.endsWith('/api/settings')) return json({});
   if (/\/api\/feeds\/1$/.test(u)) return json(FEED_DETAIL);
   if (u.endsWith('/api/feeds')) return json(FEEDS);
+  if (u.includes('/api/usage/records')) return json({ records: [], total: 0 });
+  if (u.includes('/api/usage')) return json(USAGE);
   return json({});
 }
 
@@ -63,6 +75,33 @@ describe('前端:feed 複製按鈕', () => {
     card.querySelector('[data-act="copy"]').click();
     await new Promise((r) => setTimeout(r, 10));
     expect(writeText).toHaveBeenCalledWith(rssInput.value); // 複製到的是 RSS 網址,不是標題
+  });
+});
+
+describe('前端:各 feed 用量排序', () => {
+  beforeEach(boot);
+
+  const feedCol = () => [...document.querySelectorAll('#u-byfeed tbody tr td:first-child')].map(td => td.textContent);
+  const callsCol = () => [...document.querySelectorAll('#u-byfeed tbody tr td:nth-child(2)')].map(td => td.textContent);
+
+  it('預設依費用降冪;點欄位標頭可改排序 + 切升降', async () => {
+    document.querySelector('.tab[data-tab="usage"]').click();
+    await new Promise(r => setTimeout(r, 30));
+    // 預設 cost desc → Alpha(0.05) 在 Bravo(0.02) 前
+    expect(feedCol()).toEqual(['Alpha', 'Bravo']);
+
+    // 點「Feed」欄 → 文字升冪 A→B
+    document.querySelector('#u-byfeed th[data-key="feed_title"]').click();
+    expect(feedCol()).toEqual(['Alpha', 'Bravo']);
+    // 再點一次 → 降冪 B→A
+    document.querySelector('#u-byfeed th[data-key="feed_title"]').click();
+    expect(feedCol()).toEqual(['Bravo', 'Alpha']);
+
+    // 點「翻譯篇數」→ 數字降冪(20 在 5 前 → Alpha 先)
+    document.querySelector('#u-byfeed th[data-key="calls"]').click();
+    expect(callsCol()).toEqual(['20', '5']);
+    // 表頭有排序箭頭
+    expect(document.querySelector('#u-byfeed th[data-key="calls"]').textContent).toMatch(/▼/);
   });
 });
 

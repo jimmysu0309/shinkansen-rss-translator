@@ -382,13 +382,47 @@ async function loadUsage() {
 
   renderChart(u.daily);
 
-  $('#u-byfeed tbody').innerHTML = u.byFeed.length
-    ? u.byFeed.map(f => `<tr><td>${esc(f.feed_title || '—')}</td><td>${fmt(f.calls)}</td><td>${fmt(f.input_tokens)}</td><td>${fmt(f.output_tokens)}</td><td>${fmt(f.cached_tokens)}</td><td>${fmtUsd(f.cost)}</td></tr>`).join('')
-    : '<tr><td colspan="6" style="text-align:center;color:var(--fg-dim)">尚無資料</td></tr>';
+  byFeedData = u.byFeed;
+  renderByFeed();
 
   recPage = 0;
   await loadRecords();
 }
+
+// 各 feed 用量:可依欄位排序
+let byFeedData = [];
+let byFeedSort = { key: 'cost', dir: 'desc' }; // 預設依費用高到低(同伺服器)
+
+function renderByFeed() {
+  const { key, dir } = byFeedSort;
+  const sorted = byFeedData.slice().sort((a, b) => {
+    let va = a[key], vb = b[key];
+    let cmp;
+    if (key === 'feed_title') cmp = String(va || '').localeCompare(String(vb || ''), 'zh-Hant');
+    else cmp = (Number(va) || 0) - (Number(vb) || 0);
+    return dir === 'asc' ? cmp : -cmp;
+  });
+  $('#u-byfeed tbody').innerHTML = sorted.length
+    ? sorted.map(f => `<tr><td>${esc(f.feed_title || '—')}</td><td>${fmt(f.calls)}</td><td>${fmt(f.input_tokens)}</td><td>${fmt(f.output_tokens)}</td><td>${fmt(f.cached_tokens)}</td><td>${fmtUsd(f.cost)}</td></tr>`).join('')
+    : '<tr><td colspan="6" style="text-align:center;color:var(--fg-dim)">尚無資料</td></tr>';
+  // 更新表頭箭頭
+  $$('#u-byfeed thead th').forEach(th => {
+    const arrow = th.dataset.key === key ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
+    th.textContent = th.dataset.label + arrow;
+    th.classList.toggle('sorted', th.dataset.key === key);
+  });
+}
+
+$('#u-byfeed thead').addEventListener('click', (e) => {
+  const th = e.target.closest('th[data-key]'); if (!th) return;
+  const key = th.dataset.key;
+  if (byFeedSort.key === key) {
+    byFeedSort.dir = byFeedSort.dir === 'asc' ? 'desc' : 'asc'; // 同欄再點 → 切升降
+  } else {
+    byFeedSort = { key, dir: key === 'feed_title' ? 'asc' : 'desc' }; // 文字預設升冪、數字預設降冪
+  }
+  renderByFeed();
+});
 
 const PAGE_SIZE = 50;
 

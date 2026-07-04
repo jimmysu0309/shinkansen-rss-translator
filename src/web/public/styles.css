@@ -200,6 +200,9 @@ table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border-soft); font-variant-numeric: tabular-nums; }
 th:first-child, td:first-child { text-align: left; font-family: ui-monospace, Menlo, monospace; }
 th { color: var(--fg-dim); font-weight: 500; }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--fg); }
+th.sorted { color: var(--accent); }
 
 /* ─── Toast ─── */
 .toast {

@@ -158,7 +158,14 @@
 
       <div class="card">
         <h3>各 feed 用量</h3>
-        <table id="u-byfeed"><thead><tr><th>Feed</th><th>翻譯篇數</th><th>輸入</th><th>輸出</th><th>快取</th><th>費用</th></tr></thead><tbody></tbody></table>
+        <table id="u-byfeed"><thead><tr>
+          <th class="sortable" data-key="feed_title" data-label="Feed">Feed</th>
+          <th class="sortable" data-key="calls" data-label="翻譯篇數">翻譯篇數</th>
+          <th class="sortable" data-key="input_tokens" data-label="輸入">輸入</th>
+          <th class="sortable" data-key="output_tokens" data-label="輸出">輸出</th>
+          <th class="sortable" data-key="cached_tokens" data-label="快取">快取</th>
+          <th class="sortable" data-key="cost" data-label="費用">費用</th>
+        </tr></thead><tbody></tbody></table>
       </div>
 
       <div class="card">
