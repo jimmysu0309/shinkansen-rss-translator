@@ -1,23 +1,23 @@
 # 🚄 Shinkansen RSS Translator
 
-把任何 RSS/Atom feed **翻成道地台灣繁體中文**,再輸出成新的 feed 給你的閱讀器（Miniflux、Readwise Reader…）訂閱。
+把任何 RSS/Atom feed **翻成道地台灣繁體中文**,再輸出成新的 feed 給閱讀器（Miniflux、Readwise Reader…）訂閱。
 
-翻譯引擎直接沿用瀏覽器擴充功能 **[Shinkansen](https://github.com/jimmysu0309/shinkansen)** 的 `lib/`（以 git submodule 釘版本引用，不改一行邏輯），因此享有它調校過的台灣繁中 prompt、禁用詞黑名單、抗漏譯的分段對映與 token 計價。外面包一層 Node 伺服器負責抓取、去重、排程、輸出與 web 介面。
+翻譯引擎直接沿用瀏覽器擴充功能 **[Shinkansen](https://github.com/jimmysu0309/shinkansen)** 的 `lib/`（以 git submodule 釘版本引用，不改邏輯），因此繼承它調校過的台灣繁中 prompt、禁用詞黑名單、抗漏譯的分段對映與 token 計價。外面包一層 Node 伺服器負責抓取、去重、排程、輸出與 web 介面。
 
 ---
 
 ## 為什麼做這個
 
-自架的 RSS 翻譯方案（如 rssbox / RSS Translator）常有兩個痛點：
+自架的 RSS 翻譯方案（如 rssbox / RSS Translator）常有兩個大問題：
 
-1. **翻譯品質難控、常漏譯** — 根因多在切段 / segment 對映的實作，把好 prompt 貼進去也救不了。
+1. **翻譯品質難控、常漏譯** — 根因多在切段 / segment 對映的實作。
 2. **用量難追蹤** — 沒有像樣的 token / 費用紀錄。
 
-本專案用 Shinkansen 證明過的引擎（`translateBatch` 帶序號標記 + retry + 段數對映）從源頭解決漏譯，並內建用量與費用統計。此外，**只替換文字節點、不動元素**，所以圖片、連結、粗體等 HTML 結構 100% 保留。
+本專案用 Shinkansen 驗證過的引擎（`translateBatch` 帶序號標記 + retry + 段數對映）從源頭解決漏譯，並內建用量與費用統計。此外，**只替換文字節點、不動元素**，所以圖片、連結、粗體等 HTML 結構完整保留。
 
 ## 功能特色
 
-- **雙引擎**：Gemini（AI 翻譯、品質最佳、需 API 金鑰）＋ Google 翻譯（免費、快、不需金鑰）。可全域或逐 feed 選。
+- **雙引擎**：Gemini（AI 翻譯、品質最佳、需 API 金鑰）＋ Google 翻譯（免費 & 不需金鑰）。可全域或逐 feed 選。
 - **道地台灣繁中**：內建 Shinkansen 的系統 prompt ＋ 25 條中國用語黑名單（視頻→影片、軟件→軟體…），可在介面編輯。
 - **防漏譯**：段數進出相等的不變量 ＋ 序號標記；結構、圖片、連結保留。
 - **web 介面**：新增 / 管理 feed、全域設定、用量儀表板、翻譯紀錄，全部在瀏覽器完成。
@@ -170,27 +170,6 @@ cp data/shinkansen-feed.sqlite  <備份位置>
 docker compose start app
 ```
 
-
-## 疑難排解
-
-| 症狀 | 可能原因 / 解法 |
-|---|---|
-| 譯文漏段 | 理論上被段數不變量擋住;若仍發生請開 issue 附來源 HTML |
-| Gemini 回「Thinking level is not supported」 | 用了舊模型;請用 gemini-3 系列（介面預設 Lite） |
-| Miniflux 抓不到內部 feed | 確認容器有併入 Miniflux 的網路(疊加 `docker-compose.afu.yml`)、且 Miniflux 開 `FETCHER_ALLOW_PRIVATE_NETWORKS=1` |
-| better-sqlite3 編譯失敗 | Dockerfile builder 階段已裝 python3/make/g++;本機請確認有編譯工具 |
-
-## 開發
-
-```bash
-npm run dev            # 檔案變動自動重啟
-npm test               # vitest
-npm run translate -- "Hello, world."   # CLI 冒煙翻譯
-```
-
-**專案鐵律**：每個功能都要有 test case；vendor 引擎（submodule）只去瀏覽器化、不改邏輯；HTML 切段回填的段數進出必須相等。
-
-**更新引擎**：更新 submodule 指向的 commit，再人工同步 `src/engine-adapters/` 的適配層。
 
 ## 授權
 
