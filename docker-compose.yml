@@ -1,5 +1,5 @@
 # Shinkansen RSS Translator — 獨立部署用 compose。
-# afu 上要併入 Miniflux 網路時,疊加 docker-compose.afu.yml(見 README)。
+# 要併入現有 Miniflux 網路時,疊加 docker-compose.miniflux.yml(見 README)。
 name: shinkansen-rss-translator
 
 services:

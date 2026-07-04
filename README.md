@@ -105,10 +105,10 @@ docker compose up -d --build
 
 ### B. 併入現有 Miniflux 堆疊（選配）
 
-若你已有一套 Miniflux 跑在 Docker,想讓 Miniflux 直接用內部網路抓譯後 feed:疊加 `docker-compose.afu.yml`,把本服務接上 Miniflux 所在的外部網路(預設 `miniflux_default`):
+若你已有一套 Miniflux 跑在 Docker,想讓 Miniflux 直接用內部網路抓譯後 feed:疊加 `docker-compose.miniflux.yml`,把本服務接上 Miniflux 所在的外部網路(預設 `miniflux_default`):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.afu.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.miniflux.yml up -d --build
 ```
 
 之後 Miniflux 容器即可用內部 DNS 訂閱(需 Miniflux 開 `FETCHER_ALLOW_PRIVATE_NETWORKS=1`):
