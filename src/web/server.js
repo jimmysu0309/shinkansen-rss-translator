@@ -9,7 +9,7 @@
 import Fastify from 'fastify';
 import { fileURLToPath } from 'node:url';
 import { buildFeedXml } from '../pipeline/rss-output.js';
-import { processFeed } from '../pipeline/run.js';
+import { processFeed, isFeedInFlight } from '../pipeline/run.js';
 import { fetchFeed as defaultFetchFeed } from '../pipeline/fetch-feed.js';
 import {
   DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, ENGINES,
@@ -42,14 +42,22 @@ export const SELECTABLE_MODELS = [
 // 儲存於 settings 表、但不可透過 GET /api/settings 回傳的敏感鍵
 const SECRET_KEYS = new Set(['apiKey']);
 
-// CSV 欄位跳脫:含逗號 / 引號 / 換行時用雙引號包起來
+// CSV 欄位跳脫:含逗號 / 引號 / 換行時用雙引號包起來。
+// 開頭是 = + - @ 的值補單引號前綴,防 Excel 把 feed/文章標題當公式執行(CSV injection)。
 function csvCell(v) {
-  const s = String(v ?? '');
+  let s = String(v ?? '');
+  if (/^[=+\-@\t]/.test(s)) s = "'" + s;
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+// feed 來源網址只收 http(s),擋 javascript:/file: 等垃圾輸入
+function isHttpUrl(u) {
+  try { return ['http:', 'https:'].includes(new URL(u).protocol); } catch { return false; }
+}
+
 export function buildServer(ctx, opts = {}) {
-  const app = Fastify({ logger: opts.logger ?? false });
+  // trustProxy:反向代理(https)後面時,selfUrl / OPML 網址才會用 x-forwarded-* 組出正確 scheme+host
+  const app = Fastify({ logger: opts.logger ?? false, trustProxy: true });
   // 有效金鑰:先看 settings(webui 填的),再看啟動 opts / 環境變數
   // 金鑰只從 web 設定(SQLite)取;不再讀 .env / 環境變數。opts.apiKey 供測試注入。
   const apiKey = () => ctx.settings.get('apiKey', '') || opts.apiKey || '';
@@ -60,8 +68,10 @@ export function buildServer(ctx, opts = {}) {
   app.get('/rss/:id', async (req, reply) => {
     const feed = ctx.feeds.get(Number(req.params.id));
     if (!feed) return reply.code(404).send({ error: 'feed 不存在' });
-    const entries = ctx.entries.listByFeed(feed.id, Number(req.query.limit) || 50);
-    const selfUrl = `${req.protocol}://${req.hostname}/rss/${feed.id}`;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
+    const entries = ctx.entries.listByFeed(feed.id, limit);
+    // req.host 含 port(Fastify 5 起 req.hostname 不含 port,非 80/443 埠會產出錯網址)
+    const selfUrl = `${req.protocol}://${req.host}/rss/${feed.id}`;
     const xml = buildFeedXml({ feed, entries, selfUrl });
     reply.header('content-type', 'application/atom+xml; charset=utf-8').send(xml);
   });
@@ -123,6 +133,7 @@ export function buildServer(ctx, opts = {}) {
     try {
       const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
         headers: { 'x-goog-api-key': key },
+        signal: AbortSignal.timeout(15_000),
       });
       if (!resp.ok) {
         const j = await resp.json().catch(() => ({}));
@@ -136,7 +147,15 @@ export function buildServer(ctx, opts = {}) {
   });
 
   // ─── feeds API ───
-  app.get('/api/feeds', async () => ctx.feeds.list());
+  // 列表附各狀態篇數(counts):一次 GROUP BY 算全部,前端免逐 feed 撈詳情(N+1),
+  // 且統計涵蓋所有文章(舊作法只數詳情回傳的最新 20 篇,數字會低估)
+  app.get('/api/feeds', async () => {
+    const counts = ctx.entries.statusCountsByFeed();
+    return ctx.feeds.list().map((f) => ({
+      ...f,
+      counts: counts.get(f.id) || { pending: 0, done: 0, error: 0 },
+    }));
+  });
   app.get('/api/feeds/:id', async (req, reply) => {
     const f = ctx.feeds.get(Number(req.params.id));
     if (!f) return reply.code(404).send({ error: 'feed 不存在' });
@@ -145,6 +164,7 @@ export function buildServer(ctx, opts = {}) {
   app.post('/api/feeds', async (req, reply) => {
     const body = req.body || {};
     if (!body.source_url) return reply.code(400).send({ error: 'source_url 必填' });
+    if (!isHttpUrl(body.source_url)) return reply.code(400).send({ error: 'source_url 必須是 http(s) 網址' });
     if (ctx.feeds.getByUrl(body.source_url)) return reply.code(409).send({ error: '此 feed 已存在' });
     return reply.code(201).send(ctx.feeds.create(body));
   });
@@ -161,7 +181,7 @@ export function buildServer(ctx, opts = {}) {
   // ─── OPML 匯出 / 匯入 ───
   app.get('/api/feeds/export.opml', async (req, reply) => {
     const feeds = ctx.feeds.list();
-    const base = `${req.protocol}://${req.hostname}`;
+    const base = `${req.protocol}://${req.host}`;
     const xml = feedsToOpml(feeds, (f) => `${base}/rss/${f.id}`);
     reply.header('content-disposition', 'attachment; filename="shinkansen-feed.opml"');
     reply.header('content-type', 'text/x-opml; charset=utf-8');
@@ -179,7 +199,7 @@ export function buildServer(ctx, opts = {}) {
     }
     let added = 0, skipped = 0;
     for (const e of entries) {
-      if (!e.source_url) { skipped++; continue; }
+      if (!e.source_url || !isHttpUrl(e.source_url)) { skipped++; continue; } // 缺網址或非 http(s)
       if (ctx.feeds.getByUrl(e.source_url)) { skipped++; continue; } // 已存在
       ctx.feeds.create({ source_url: e.source_url, title: e.title, category: e.category });
       added++;
@@ -210,6 +230,7 @@ export function buildServer(ctx, opts = {}) {
   app.post('/api/feeds/:id/refresh', async (req, reply) => {
     const feed = ctx.feeds.get(Number(req.params.id));
     if (!feed) return reply.code(404).send({ error: 'feed 不存在' });
+    if (isFeedInFlight(feed.id)) return reply.code(409).send({ error: '此 feed 正在處理中,請稍候' });
     // Google 翻譯不需金鑰;只有 Gemini 引擎缺金鑰才擋
     const engine = feed.engine || ctx.settings.get('engine', 'gemini');
     if (engine === 'gemini' && !apiKey()) {
@@ -223,6 +244,8 @@ export function buildServer(ctx, opts = {}) {
   app.post('/api/feeds/:id/retry-errors', async (req, reply) => {
     const feed = ctx.feeds.get(Number(req.params.id));
     if (!feed) return reply.code(404).send({ error: 'feed 不存在' });
+    // 撞鎖要在重設狀態「前」擋:先 reset 再發現在跑,這批 pending 會等到下次排程才補翻
+    if (isFeedInFlight(feed.id)) return reply.code(409).send({ error: '此 feed 正在處理中,請稍候' });
     const reset = ctx.entries.resetErrorsToPending(feed.id);
     if (reset === 0) return { reset: 0, translated: 0, failed: 0 };
     const engine = feed.engine || ctx.settings.get('engine', 'gemini');
@@ -237,6 +260,7 @@ export function buildServer(ctx, opts = {}) {
   app.post('/api/feeds/:id/retranslate', async (req, reply) => {
     const feed = ctx.feeds.get(Number(req.params.id));
     if (!feed) return reply.code(404).send({ error: 'feed 不存在' });
+    if (isFeedInFlight(feed.id)) return reply.code(409).send({ error: '此 feed 正在處理中,請稍候' });
     const engine = feed.engine || ctx.settings.get('engine', 'gemini');
     if (engine === 'gemini' && !apiKey()) {
       return reply.code(400).send({ error: '缺 Gemini API 金鑰,請到設定頁填入或改用 Google 翻譯' });

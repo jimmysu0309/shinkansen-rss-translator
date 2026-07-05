@@ -61,5 +61,11 @@ if (pruned) app.log.info(`啟動清理:刪除 ${pruned} 筆過期 log`);
 
 applyPollCron(initialCron);
 
+// log 清理獨立排程(每日 03:30):不能綁在 pollCron 上,否則關閉自動更新後 log 無限累積
+cron.schedule('30 3 * * *', () => {
+  const n = pruneLogs(ctx, retention());
+  if (n) app.log.info(`每日清理:刪除 ${n} 筆過期 log`);
+});
+
 await app.listen({ port: PORT, host: '0.0.0.0' });
 console.log(`Shinkansen RSS Translator 已啟動:http://localhost:${PORT}  (DB: ${DB_PATH})`);

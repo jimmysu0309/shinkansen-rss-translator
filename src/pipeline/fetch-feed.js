@@ -48,7 +48,7 @@ export async function parseFeedXml(xml) {
 /**
  * 抓取 feed,支援 conditional GET。
  * @param {string} url
- * @param {{etag?, lastModified?, fetchImpl?}} [opts] fetchImpl 供測試注入
+ * @param {{etag?, lastModified?, fetchImpl?, timeoutMs?}} [opts] fetchImpl 供測試注入
  * @returns {Promise<{notModified:boolean, title?, items, etag, lastModified}>}
  */
 export async function fetchFeed(url, opts = {}) {
@@ -57,7 +57,8 @@ export async function fetchFeed(url, opts = {}) {
   if (opts.etag) headers['if-none-match'] = opts.etag;
   if (opts.lastModified) headers['if-modified-since'] = opts.lastModified;
 
-  const resp = await doFetch(url, { headers });
+  // timeout:掛掉的來源不能卡住整條管線(undici 預設 headers timeout 長達 5 分鐘)
+  const resp = await doFetch(url, { headers, signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) });
   if (resp.status === 304) {
     return { notModified: true, items: [], etag: opts.etag || null, lastModified: opts.lastModified || null };
   }

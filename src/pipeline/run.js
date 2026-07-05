@@ -16,6 +16,13 @@ import {
   DEFAULT_MAX_UNITS_PER_BATCH, DEFAULT_MAX_CHARS_PER_BATCH, DEFAULT_TEMPERATURE,
 } from '../engine.js';
 
+// 進行中的 feed(id 集合):同一 feed 同時只允許一個 processFeed。
+// 沒有這道鎖,排程觸發與手動刷新重疊時會各自讀到同一批 pending → 同批文章翻兩次(重複扣 token)。
+const inFlight = new Set();
+
+/** 此 feed 是否正在處理中(供 API 層先擋 409,避免重設狀態後才發現撞鎖) */
+export function isFeedInFlight(feedId) { return inFlight.has(feedId); }
+
 /**
  * 由全域 settings + feed 覆寫,組出翻譯一篇文章要用的 opts。
  * feed 欄位優先於全域;全域缺則用引擎預設。
@@ -45,6 +52,20 @@ export function buildTranslateOpts(ctx, feed, apiKey) {
  * @returns {Promise<{fetched:number, added:number, translated:number, failed:number, notModified:boolean}>}
  */
 export async function processFeed(ctx, feed, deps = {}) {
+  if (inFlight.has(feed.id)) {
+    const err = new Error(`feed ${feed.id} 正在處理中,跳過本次(避免同批文章重複翻譯)`);
+    err.code = 'FEED_IN_FLIGHT';
+    throw err;
+  }
+  inFlight.add(feed.id);
+  try {
+    return await processFeedLocked(ctx, feed, deps);
+  } finally {
+    inFlight.delete(feed.id);
+  }
+}
+
+async function processFeedLocked(ctx, feed, deps) {
   const apiKey = deps.apiKey;
   const fetchImpl = deps.fetchFeed || defaultFetchFeed;
   const translateImpl = deps.translateEntry || defaultTranslateEntry;
@@ -107,6 +128,8 @@ export async function processFeed(ctx, feed, deps = {}) {
         }
       }
       const r = await translateImpl({ title: e.title, contentHtml }, opts);
+      // 段數曾對不上(引擎已自動補救,該段退回原文)→ 留 warn 供追查漏譯
+      if (r.hadMismatch) log('warn', 'translate', `譯文段數曾不符,部分段落退回原文:${e.title || '(無標題)'}`);
       ctx.entries.markDone(e.id, {
         titleTranslated: r.titleTranslated,
         contentTranslated: r.contentTranslated,
@@ -148,6 +171,7 @@ export async function processAllFeeds(ctx, deps = {}) {
   const feeds = ctx.feeds.list({ enabledOnly: true });
   const results = [];
   for (const feed of feeds) {
+    if (isFeedInFlight(feed.id)) { results.push({ feedId: feed.id, skipped: true }); continue; }
     try {
       results.push({ feedId: feed.id, ...(await processFeed(ctx, feed, deps)) });
     } catch (err) {

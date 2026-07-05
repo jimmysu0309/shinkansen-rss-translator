@@ -152,6 +152,18 @@ describe('entries DAO — 去重是核心', () => {
     expect(n).toBe(2);
     expect(ctx.entries.pendingByFeed(feedId)).toHaveLength(2);
   });
+
+  it('statusCountsByFeed:一次 GROUP BY 回各 feed 的狀態篇數', () => {
+    const feed2 = ctx.feeds.create({ source_url: 'https://ex2.com/feed' }).id;
+    const a = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1' }).entry;
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'g2' });
+    const c = ctx.entries.upsertNew({ feed_id: feed2, guid: 'g1' }).entry;
+    ctx.entries.markDone(a.id, {});
+    ctx.entries.markError(c.id, 'x');
+    const m = ctx.entries.statusCountsByFeed();
+    expect(m.get(feedId)).toEqual({ pending: 1, done: 1, error: 0 });
+    expect(m.get(feed2)).toEqual({ pending: 0, done: 0, error: 1 });
+  });
 });
 
 describe('usage DAO', () => {

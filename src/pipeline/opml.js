@@ -64,12 +64,12 @@ export function parseOpml(opmlText) {
   return out;
 }
 
-// 把屬性字串解析成 { 小寫鍵: 值 }
+// 把屬性字串解析成 { 小寫鍵: 值 }(雙引號 / 單引號皆可 —— 部分閱讀器匯出用單引號)
 function parseAttrs(s) {
   const attrs = {};
-  const re = /([\w:-]+)\s*=\s*"([^"]*)"/g;
+  const re = /([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   let m;
-  while ((m = re.exec(s))) attrs[m[1].toLowerCase()] = m[2];
+  while ((m = re.exec(s))) attrs[m[1].toLowerCase()] = m[2] ?? m[3];
   return attrs;
 }
 

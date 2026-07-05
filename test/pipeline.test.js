@@ -6,8 +6,8 @@
 //   ✓ translateEntry 整合(需 key):真翻一篇含圖 HTML → 中文 + 圖片保留 + 段數相符
 //   ✗ 不驗:真實網路抓取(部署驗)
 import { describe, it, expect, beforeEach } from 'vitest';
-import { parseFeedXml } from '../src/pipeline/fetch-feed.js';
-import { processFeed, pruneLogs } from '../src/pipeline/run.js';
+import { parseFeedXml, fetchFeed } from '../src/pipeline/fetch-feed.js';
+import { processFeed, processAllFeeds, pruneLogs } from '../src/pipeline/run.js';
 import { translateEntry } from '../src/pipeline/translate-entry.js';
 import { createDb } from '../src/db/index.js';
 
@@ -185,6 +185,84 @@ describe('processFeed 編排', () => {
     expect(logs.some(l => l.category === 'fetch' && /抓取/.test(l.message))).toBe(true);
     expect(logs.some(l => l.category === 'translate' && l.level === 'info' && /已翻譯/.test(l.message))).toBe(true);
     expect(logs.some(l => l.category === 'translate' && l.level === 'error' && /翻譯失敗/.test(l.message))).toBe(true);
+  });
+});
+
+// ─── fetchFeed(離線,注入 fetchImpl)───
+describe('fetchFeed', () => {
+  const RSS = '<rss version="2.0"><channel><title>T</title></channel></rss>';
+
+  it('帶 conditional GET 標頭與 timeout signal', async () => {
+    let saw;
+    const fake = async (url, init) => {
+      saw = init;
+      return { status: 200, ok: true, text: async () => RSS, headers: { get: () => null } };
+    };
+    const r = await fetchFeed('https://ex.com/f', { fetchImpl: fake, etag: 'W/"e"', lastModified: 'Mon' });
+    expect(saw.headers['if-none-match']).toBe('W/"e"');
+    expect(saw.headers['if-modified-since']).toBe('Mon');
+    expect(saw.signal).toBeInstanceOf(AbortSignal); // 掛掉的來源不能卡整條管線
+    expect(r.notModified).toBe(false);
+    expect(r.title).toBe('T');
+  });
+
+  it('304 → notModified,沿用舊 etag/lastModified', async () => {
+    const fake = async () => ({ status: 304 });
+    const r = await fetchFeed('https://ex.com/f', { fetchImpl: fake, etag: 'W/"e"' });
+    expect(r).toMatchObject({ notModified: true, etag: 'W/"e"', items: [] });
+  });
+});
+
+describe('processFeed 併發保護', () => {
+  let ctx, feed;
+  const items = [{ guid: 'g1', title: 'A', contentHtml: '<p>x</p>', published_at: 1 }];
+  const makeFetch = async () => ({ notModified: false, title: 'F', items, etag: null, lastModified: null });
+  const fakeTranslate = async ({ title, contentHtml }) => ({
+    titleTranslated: `譯:${title}`, contentTranslated: contentHtml,
+    usage: { inputTokens: 1, outputTokens: 1, cachedTokens: 0 }, hadMismatch: false,
+  });
+
+  beforeEach(() => {
+    ctx = createDb(':memory:');
+    feed = ctx.feeds.create({ source_url: 'https://ex.com/lock' });
+  });
+
+  it('同一 feed 處理中再呼叫 → 拒絕(FEED_IN_FLIGHT),不重複翻譯', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const slow = async (e) => { await gate; return fakeTranslate(e); };
+    const deps = { apiKey: 'x', fetchFeed: makeFetch, translateEntry: slow };
+
+    const first = processFeed(ctx, feed, deps); // 卡在翻譯中
+    await new Promise((r) => setTimeout(r, 10));
+    await expect(processFeed(ctx, feed, deps)).rejects.toMatchObject({ code: 'FEED_IN_FLIGHT' });
+
+    release();
+    await first;
+    expect(ctx.usage.getStats().calls).toBe(1); // 只翻(記帳)一次
+  });
+
+  it('processAllFeeds 跳過處理中的 feed(回 skipped),鎖釋放後可再處理', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const slow = async (e) => { await gate; return fakeTranslate(e); };
+
+    const first = processFeed(ctx, feed, { apiKey: 'x', fetchFeed: makeFetch, translateEntry: slow });
+    await new Promise((r) => setTimeout(r, 10));
+    const results = await processAllFeeds(ctx, { apiKey: 'x', fetchFeed: makeFetch, translateEntry: fakeTranslate });
+    expect(results).toContainEqual({ feedId: feed.id, skipped: true });
+
+    release();
+    await first;
+    const again = await processAllFeeds(ctx, { apiKey: 'x', fetchFeed: makeFetch, translateEntry: fakeTranslate });
+    expect(again[0].skipped).toBeUndefined(); // 鎖已釋放,正常處理
+    expect(again[0].feedId).toBe(feed.id);
+  });
+
+  it('翻譯回報 hadMismatch → 寫 warn log 供追查漏譯', async () => {
+    const mismatch = async (e) => ({ ...(await fakeTranslate(e)), hadMismatch: true });
+    await processFeed(ctx, feed, { apiKey: 'x', fetchFeed: makeFetch, translateEntry: mismatch });
+    expect(ctx.logs.query().some((l) => l.level === 'warn' && /段數曾不符/.test(l.message))).toBe(true);
   });
 });
 

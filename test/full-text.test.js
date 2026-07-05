@@ -50,4 +50,11 @@ describe('fetchFullText', () => {
     const fakeFetch = async () => ({ ok: false, status: 403, text: async () => '' });
     expect(await fetchFullText('https://ex.com/x', { fetchImpl: fakeFetch })).toBe(null);
   });
+
+  it('請求帶 timeout signal(掛掉的站不能卡住翻譯管線)', async () => {
+    let saw;
+    const fakeFetch = async (url, init) => { saw = init; return { ok: true, text: async () => PAGE }; };
+    await fetchFullText('https://ex.com/posts/a', { fetchImpl: fakeFetch });
+    expect(saw.signal).toBeInstanceOf(AbortSignal);
+  });
 });

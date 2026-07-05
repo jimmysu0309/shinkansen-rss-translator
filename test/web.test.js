@@ -340,6 +340,90 @@ describe('引擎欄位', () => {
   });
 });
 
+describe('輸出網址含 port(Fastify 5 的 req.hostname 不含 port,必須用 req.host)', () => {
+  it('/rss/:id 的 self link 保留 host 的 port', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
+    const rss = await app.inject({ method: 'GET', url: `/rss/${f.id}`, headers: { host: 'myhost:8088' } });
+    expect(rss.body).toContain(`http://myhost:8088/rss/${f.id}`);
+  });
+
+  it('OPML 匯出的 xmlUrl 保留 port', async () => {
+    await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } });
+    const res = await app.inject({ method: 'GET', url: '/api/feeds/export.opml', headers: { host: 'myhost:8088' } });
+    expect(res.body).toContain('xmlUrl="http://myhost:8088/rss/');
+  });
+});
+
+describe('feeds 列表附狀態篇數', () => {
+  it('GET /api/feeds 每個 feed 帶 counts(涵蓋所有文章,非只列表頁那幾篇)', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 1 篇 done
+    const { entry } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'err-1', title: 'E', content_html: '<p>x</p>' });
+    ctx.entries.markError(entry.id, new Error('boom'));
+    const list = (await app.inject({ method: 'GET', url: '/api/feeds' })).json();
+    expect(list[0].counts).toEqual({ pending: 0, done: 1, error: 1 });
+  });
+
+  it('沒有文章的 feed counts 全 0', async () => {
+    await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://empty.com/feed' } });
+    const list = (await app.inject({ method: 'GET', url: '/api/feeds' })).json();
+    expect(list[0].counts).toEqual({ pending: 0, done: 0, error: 0 });
+  });
+});
+
+describe('feed 來源網址驗證', () => {
+  it('非 http(s) 的 source_url → 400', async () => {
+    for (const bad of ['javascript:alert(1)', 'file:///etc/passwd', 'not a url']) {
+      const r = await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: bad } });
+      expect(r.statusCode).toBe(400);
+    }
+  });
+
+  it('OPML 匯入:非 http(s) 網址列入 skipped', async () => {
+    const opml = `<opml><body>
+      <outline text="好" xmlUrl="https://ok.com/feed"/>
+      <outline text="壞" xmlUrl="javascript:alert(1)"/>
+    </body></opml>`;
+    const res = await app.inject({ method: 'POST', url: '/api/feeds/import-opml', payload: { opml } });
+    expect(res.json()).toMatchObject({ added: 1, skipped: 1 });
+  });
+});
+
+describe('CSV 公式注入防護', () => {
+  it('= 開頭的標題在 CSV 內補單引號前綴', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', title: '=1+2' } })).json();
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    const res = await app.inject({ method: 'GET', url: '/api/usage/export.csv' });
+    expect(res.body).toContain("'=1+2");
+    expect(res.body).not.toContain(',=1+2'); // 不能有裸公式欄位
+  });
+});
+
+describe('併發保護(同 feed 同時只跑一個)', () => {
+  it('刷新進行中再打 refresh → 409,且只翻一次', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const slowDeps = {
+      ...fakeProcessDeps,
+      translateEntry: async (e) => { await gate; return fakeProcessDeps.translateEntry(e); },
+    };
+    const ctx2 = createDb(':memory:');
+    const app2 = buildServer(ctx2, { apiKey: 'k', processDeps: slowDeps });
+    const f = (await app2.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://slow.com/feed' } })).json();
+
+    const first = app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 卡在翻譯
+    await new Promise((r) => setTimeout(r, 20));
+    const second = await app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    expect(second.statusCode).toBe(409);
+    const retr = await app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/retranslate` });
+    expect(retr.statusCode).toBe(409); // 重譯也要擋(否則 reset 會攪亂進行中的批次)
+
+    release();
+    expect((await first).json()).toMatchObject({ translated: 1 });
+    expect(ctx2.usage.getStats().calls).toBe(1); // 沒有重複記帳
+  });
+});
+
 describe('RSS 輸出端點', () => {
   it('GET /rss/:id → Atom,content-type 正確,含譯文', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', title: 'Ex' } })).json();

@@ -25,8 +25,8 @@ const DEFAULTS = {
   pollCron: '*/15 * * * *', pollCronOptions: [{ value: '*/15 * * * *', label: '每 15 分鐘' }, { value: '', label: '關閉' }],
   modelPricing: { 'gemini-3.1-flash-lite': { inputPerMTok: 0.25, outputPerMTok: 1.5 } }, hasApiKey: true,
 };
-const FEEDS = [{ id: 1, title: 'take.surf', source_url: 'https://take.surf/feed.atom', engine: 'gemini', model: 'gemini-3.1-flash-lite', enabled: 1, fetch_article: 0, category: '已翻譯' }];
-const FEED_DETAIL = { ...FEEDS[0], entries: [{ translation_status: 'done' }] };
+// counts 由伺服器列表附上(前端不再逐 feed 撈詳情)
+const FEEDS = [{ id: 1, title: 'take.surf', source_url: 'https://take.surf/feed.atom', engine: 'gemini', model: 'gemini-3.1-flash-lite', enabled: 1, fetch_article: 0, category: '已翻譯', counts: { done: 1, pending: 0, error: 0 } }];
 
 const USAGE = {
   total: { cost: 0.07, calls: 25, input_tokens: 400, output_tokens: 130, cached_tokens: 0, cacheHitRate: 0 },
@@ -43,7 +43,6 @@ function mockFetch(url) {
   const json = (d) => Promise.resolve({ ok: true, headers: { get: () => 'application/json' }, json: () => Promise.resolve(d), text: () => Promise.resolve('') });
   if (u.endsWith('/api/defaults')) return json(DEFAULTS);
   if (u.endsWith('/api/settings')) return json({});
-  if (/\/api\/feeds\/1$/.test(u)) return json(FEED_DETAIL);
   if (u.endsWith('/api/feeds')) return json(FEEDS);
   if (u.includes('/api/usage/records')) return json({ records: [], total: 0 });
   if (u.includes('/api/usage')) return json(USAGE);
@@ -75,6 +74,18 @@ describe('前端:feed 複製按鈕', () => {
     card.querySelector('[data-act="copy"]').click();
     await new Promise((r) => setTimeout(r, 10));
     expect(writeText).toHaveBeenCalledWith(rssInput.value); // 複製到的是 RSS 網址,不是標題
+  });
+});
+
+describe('前端:feed 卡片狀態徽章', () => {
+  beforeEach(boot);
+
+  it('徽章用列表附的 counts 渲染(不再逐 feed 撈詳情)', () => {
+    const card = document.querySelector('#feed-list .feed-item');
+    expect(card.textContent).toContain('1 已翻');
+    // 只打了一次 /api/feeds,沒有 /api/feeds/1 詳情請求
+    const calls = global.fetch.mock.calls.map(c => String(c[0]));
+    expect(calls.some(u => /\/api\/feeds\/1$/.test(u))).toBe(false);
   });
 });
 

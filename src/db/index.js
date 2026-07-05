@@ -143,6 +143,9 @@ function makeEntriesDao(db) {
   const listByFeed = db.prepare('SELECT * FROM entries WHERE feed_id = ? ORDER BY published_at DESC, id DESC LIMIT ?');
   const pendingByFeed = db.prepare("SELECT * FROM entries WHERE feed_id = ? AND translation_status = 'pending' ORDER BY id");
   const countPending = db.prepare("SELECT COUNT(*) n FROM entries WHERE translation_status = 'pending'");
+  const statusCounts = db.prepare(
+    'SELECT feed_id, translation_status status, COUNT(*) n FROM entries GROUP BY feed_id, translation_status',
+  );
   const markDone = db.prepare(`
     UPDATE entries SET title_translated = @title_translated, content_translated = @content_translated,
       translation_status = 'done', translation_error = NULL,
@@ -174,6 +177,16 @@ function makeEntriesDao(db) {
     listByFeed(feedId, limit = 50) { return listByFeed.all(feedId, limit); },
     pendingByFeed(feedId) { return pendingByFeed.all(feedId); },
     countPending() { return countPending.get().n; },
+    /** 各 feed 的狀態篇數:Map<feed_id, {pending, done, error}>(一次 GROUP BY,供列表附 counts) */
+    statusCountsByFeed() {
+      const out = new Map();
+      for (const r of statusCounts.all()) {
+        let c = out.get(r.feed_id);
+        if (!c) { c = { pending: 0, done: 0, error: 0 }; out.set(r.feed_id, c); }
+        c[r.status] = r.n;
+      }
+      return out;
+    },
     markDone(id, { titleTranslated, contentTranslated, tokensIn = 0, tokensOut = 0, translatedAt }) {
       markDone.run({
         id,

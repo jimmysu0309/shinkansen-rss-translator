@@ -55,6 +55,13 @@ describe('parseOpml', () => {
     expect(rows[0].source_url).toBe('https://child.com/feed');
   });
 
+  it('單引號屬性也解析(部分閱讀器匯出格式)', () => {
+    const opml = `<opml><body><outline text='單引號' xmlUrl='https://sq.com/feed'/></body></opml>`;
+    const rows = parseOpml(opml);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source_url: 'https://sq.com/feed', title: '單引號' });
+  });
+
   it('round-trip:匯出再匯入得回來源網址', () => {
     const feeds = [{ id: 1, title: 'X', source_url: 'https://x.com/feed' }];
     // 匯出時 xmlUrl 是譯後網址;但若把來源當 xmlUrl 匯出則 round-trip 回來源。

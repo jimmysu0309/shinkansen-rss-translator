@@ -193,15 +193,12 @@ function optionsHtml(items, selected) {
 }
 
 async function loadFeeds() {
-  const feeds = await api('GET', '/api/feeds');
+  const feeds = await api('GET', '/api/feeds'); // 列表已附各狀態篇數(counts),免逐 feed 撈詳情
   const list = $('#feed-list');
   if (!feeds.length) { list.innerHTML = '<p class="hint">還沒有 feed。用上方表單新增第一個。</p>'; return; }
 
-  // 逐 feed 抓詳情(含 entries 狀態)
-  const detailed = await Promise.all(feeds.map(f => api('GET', `/api/feeds/${f.id}`)));
-  list.innerHTML = detailed.map(f => {
-    const counts = { done: 0, pending: 0, error: 0 };
-    for (const e of f.entries) counts[e.translation_status] = (counts[e.translation_status] || 0) + 1;
+  list.innerHTML = feeds.map(f => {
+    const counts = f.counts || { done: 0, pending: 0, error: 0 };
     const rssUrl = `${location.origin}/rss/${f.id}`;
     return `<div class="feed-item" data-id="${f.id}">
       <div class="feed-head">
@@ -255,6 +252,7 @@ $('#feed-list').addEventListener('click', async (e) => {
   const btn = e.target.closest('button'); if (!btn) return;
   const item = e.target.closest('.feed-item'); const id = item.dataset.id;
   const act = btn.dataset.act;
+  const origLabel = btn.textContent; // 失敗時還原(否則按鈕卡在「刷新中…」)
   try {
     if (act === 'copy') {
       await copyText($('.rss-row input', item).value); // 鎖定 RSS 那格,別抓到編輯表單的 input
@@ -298,7 +296,7 @@ $('#feed-list').addEventListener('click', async (e) => {
       await api('PATCH', `/api/feeds/${id}`, patch);
       toast('已更新'); loadFeeds();
     }
-  } catch (err) { toast('操作失敗:' + err.message); btn.disabled = false; }
+  } catch (err) { toast('操作失敗:' + err.message); btn.textContent = origLabel; btn.disabled = false; }
 });
 
 // OPML 匯出

@@ -41,12 +41,15 @@ export function extractReadable(html, url) {
 /**
  * 抓取文章網址並抽全文。
  * @param {string} url
- * @param {{fetchImpl?:function}} [opts] fetchImpl 供測試注入
+ * @param {{fetchImpl?:function, timeoutMs?:number}} [opts] fetchImpl 供測試注入
  * @returns {Promise<string|null>}
  */
 export async function fetchFullText(url, opts = {}) {
   const doFetch = opts.fetchImpl || fetch;
-  const resp = await doFetch(url, { headers: { 'user-agent': 'Shinkansen-Feed/0.1 (+full-text)' } });
+  const resp = await doFetch(url, {
+    headers: { 'user-agent': 'Shinkansen-Feed/0.1 (+full-text)' },
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+  });
   if (!resp.ok) return null;
   const html = await resp.text();
   return extractReadable(html, url);
