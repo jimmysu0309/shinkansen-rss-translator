@@ -280,6 +280,13 @@ describe('Log API', () => {
     expect(res.body).toContain('等級');
   });
 
+  it('defaults 提供版本號(與 package.json 一致,單一資料源)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    const d = (await app.inject({ method: 'GET', url: '/api/defaults' })).json();
+    expect(d.version).toBe(pkg.version);
+  });
+
   it('defaults 提供保留天數(7)與 filter 選項', async () => {
     const d = (await app.inject({ method: 'GET', url: '/api/defaults' })).json();
     expect(d.logRetentionDays).toBe(7);

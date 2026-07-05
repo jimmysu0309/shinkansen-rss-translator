@@ -17,6 +17,7 @@ const bodyHtml = read('../src/web/public/index.html').match(/<body>([\s\S]*)<\/b
 const appSrc = read('../src/web/public/app.js');
 
 const DEFAULTS = {
+  version: '9.9.9',
   model: 'gemini-3.1-flash-lite', models: [{ id: 'gemini-3.1-flash-lite', label: 'Lite' }],
   engines: [{ id: 'gemini', label: 'Gemini' }, { id: 'google', label: 'Google' }],
   systemPrompt: 'sp', forbiddenTerms: [{ forbidden: '視頻', replacement: '影片' }], targetLanguage: 'zh-TW',
@@ -145,5 +146,14 @@ describe('前端:設定頁載入', () => {
     expect(document.querySelector('#s-forbidden').value).toContain('視頻=影片');
     // 每 feed 文章上限從 DEFAULTS 預填
     expect(document.querySelector('#s-maxentries').value).toBe('300');
+  });
+
+  it('標題下方顯示版本與 GitHub 連結;head 有 favicon', () => {
+    expect(document.querySelector('#app-version').textContent).toBe('v9.9.9');
+    const gh = document.querySelector('.app-meta a');
+    expect(gh.href).toContain('github.com/jimmysu0309/shinkansen-rss-translator');
+    expect(gh.rel).toContain('noopener');
+    // favicon 在 index.html 的 <head>(jsdom 只掛 body,直接驗原始 HTML)
+    expect(read('../src/web/public/index.html')).toContain('rel="icon"');
   });
 });

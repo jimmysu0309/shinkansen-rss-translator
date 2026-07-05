@@ -8,6 +8,7 @@
 
 import Fastify from 'fastify';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { buildFeedXml } from '../pipeline/rss-output.js';
 import { processFeed, isFeedInFlight, DEFAULT_MAX_ENTRIES_PER_FEED } from '../pipeline/run.js';
@@ -18,6 +19,11 @@ import {
 } from '../engine.js';
 import { costForUsage, MODEL_PRICING } from '../pricing.js';
 import { feedsToOpml, parseOpml } from '../pipeline/opml.js';
+
+// 版本號單一資料源 = package.json(前端標題下方顯示用)
+export const APP_VERSION = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+).version;
 
 // log 保留天數預設
 export const DEFAULT_LOG_RETENTION_DAYS = 7;
@@ -130,6 +136,7 @@ export function buildServer(ctx, opts = {}) {
 
   // ─── 預設值 / 環境狀態(前端預填用)───
   app.get('/api/defaults', async () => ({
+    version: APP_VERSION,
     model: DEFAULT_MODEL,
     models: SELECTABLE_MODELS,
     engines: ENGINES,

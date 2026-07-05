@@ -24,8 +24,11 @@
 body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--fg); font-size: 13px; }
 .container { max-width: 760px; margin: 32px auto; padding: 0 20px; }
 
-h1 { margin: 0 0 20px; font-size: 22px; display: flex; align-items: baseline; gap: 12px; }
-h1 .subtitle { font-size: 13px; color: var(--fg-dim); font-weight: 400; }
+h1 { margin: 0 0 4px; font-size: 22px; display: flex; align-items: baseline; gap: 12px; }
+/* 標題下方的版本 + GitHub 連結列 */
+.app-meta { margin: 0 0 20px; font-size: 12px; color: var(--fg-dim); }
+.app-meta a { color: var(--fg-dim); text-decoration: underline; }
+.app-meta a:hover { color: var(--accent); }
 h3 { margin: 0 0 10px; font-size: 13px; color: var(--accent); }
 
 /* ─── Tabs ─── */

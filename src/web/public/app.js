@@ -104,6 +104,7 @@ async function loadSettings() {
   DEFAULTS = await api('GET', '/api/defaults');
   const s = await api('GET', '/api/settings'); // 不含 apiKey(伺服器已濾除)
 
+  $('#app-version').textContent = DEFAULTS.version ? `v${DEFAULTS.version}` : '';
   updateApiKeyPill(DEFAULTS.hasApiKey);
   $('#s-apikey').value = ''; // 永遠留空;有值才代表要變更
 
