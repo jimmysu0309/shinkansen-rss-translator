@@ -116,6 +116,25 @@ describe('前端:各 feed 用量排序', () => {
   });
 });
 
+describe('前端:匯入設定', () => {
+  beforeEach(boot);
+
+  it('選檔後 PUT 設定內容(支援匯出檔形狀)並重載畫面', async () => {
+    const input = document.querySelector('#settings-file');
+    const payload = { exportedAt: '2026-07-05', settings: { model: 'imported-model' } };
+    const file = new File([JSON.stringify(payload)], 'settings.json', { type: 'application/json' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    input.dispatchEvent(new Event('change'));
+    await new Promise((r) => setTimeout(r, 30));
+
+    const putCall = global.fetch.mock.calls.find(
+      (c) => c[1]?.method === 'PUT' && String(c[0]).endsWith('/api/settings'),
+    );
+    expect(putCall).toBeTruthy();
+    expect(JSON.parse(putCall[1].body)).toEqual({ model: 'imported-model' }); // 只送 settings 內容
+  });
+});
+
 describe('前端:設定頁載入', () => {
   beforeEach(boot);
 

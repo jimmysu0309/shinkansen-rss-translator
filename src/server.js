@@ -13,6 +13,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cron from 'node-cron';
 import { createDb } from './db/index.js';
+import { backupDb } from './db/backup.js';
 import { buildServer, registerStatic, DEFAULT_LOG_RETENTION_DAYS, DEFAULT_POLL_CRON } from './web/server.js';
 import { processAllFeeds, pruneLogs } from './pipeline/run.js';
 
@@ -73,6 +74,20 @@ applyPollCron(initialCron);
 cron.schedule('30 3 * * *', () => {
   const n = pruneLogs(ctx, retention());
   if (n) app.log.info(`每日清理:刪除 ${n} 筆過期 log`);
+});
+
+// 每日 04:00 自動備份 DB 到 data/backups/(留 7 份輪替)
+cron.schedule('0 4 * * *', async () => {
+  try {
+    const r = await backupDb(ctx.db, DB_PATH);
+    if (r) {
+      ctx.logs.append({ level: 'info', category: 'system', message: `自動備份完成:${r.path}${r.removed ? `(輪替刪除 ${r.removed} 份)` : ''}` });
+      app.log.info(`自動備份完成:${r.path}`);
+    }
+  } catch (err) {
+    ctx.logs.append({ level: 'error', category: 'system', message: '自動備份失敗', detail: String(err?.message || err) });
+    app.log.error({ err }, '自動備份失敗');
+  }
 });
 
 await app.listen({ port: PORT, host: '0.0.0.0' });

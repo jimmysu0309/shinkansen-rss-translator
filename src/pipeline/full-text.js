@@ -44,6 +44,9 @@ export function extractReadable(html, url) {
  * @param {{fetchImpl?:function, timeoutMs?:number}} [opts] fetchImpl 供測試注入
  * @returns {Promise<string|null>}
  */
+// 單頁 HTML 大小上限:超過視為異常頁(影音檔、爆量頁),放棄抽全文改用摘要,防吃爆記憶體
+const MAX_HTML_BYTES = 5 * 1024 * 1024;
+
 export async function fetchFullText(url, opts = {}) {
   const doFetch = opts.fetchImpl || fetch;
   const resp = await doFetch(url, {
@@ -51,7 +54,10 @@ export async function fetchFullText(url, opts = {}) {
     signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
   });
   if (!resp.ok) return null;
+  const declared = Number(resp.headers?.get?.('content-length'));
+  if (declared > MAX_HTML_BYTES) return null;
   const html = await resp.text();
+  if (html.length > MAX_HTML_BYTES) return null; // 沒宣告 content-length 的以實際長度擋
   return extractReadable(html, url);
 }
 

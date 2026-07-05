@@ -16,3 +16,9 @@ services:
       - DB_PATH=/app/data/shinkansen-feed.sqlite
     volumes:
       - ./data:/app/data
+    # 容器 stdout log 輪替(pino 每請求都寫,不設上限會吃磁碟)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

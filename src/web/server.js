@@ -43,6 +43,13 @@ export const SELECTABLE_MODELS = [
 // 儲存於 settings 表、但不可透過 GET /api/settings 回傳的敏感鍵
 const SECRET_KEYS = new Set(['apiKey']);
 
+// PUT /api/settings 只收這些鍵(白名單):擋垃圾鍵污染 settings 表、匯入亂檔時只取認得的欄位
+const SETTING_KEYS = new Set([
+  'apiKey', 'engine', 'model', 'targetLanguage', 'systemPrompt', 'forbiddenTerms',
+  'fixedGlossary', 'maxUnitsPerBatch', 'maxCharsPerBatch', 'temperature',
+  'logRetentionDays', 'pollCron', 'modelPricingOverrides', 'maxEntriesPerFeed',
+]);
+
 // CSV 欄位跳脫:含逗號 / 引號 / 換行時用雙引號包起來。
 // 開頭是 = + - @ 的值補單引號前綴,防 Excel 把 feed/文章標題當公式執行(CSV injection)。
 function csvCell(v) {
@@ -72,15 +79,31 @@ export function buildServer(ctx, opts = {}) {
   // 豁免 /rss/:id:譯後 feed 要讓 Miniflux 等閱讀器免認證抓取。
   // 用 req.routeOptions.url(路由解析後的 pattern)判斷豁免,不比對原始 req.url ——
   // 原始路徑可被 /rss/../api/x 這類 dot-segment 混淆,route pattern 不會。
+  //
+  // 防暴力嘗試:同 IP 連續錯 AUTH_MAX_FAILS 次 → 鎖 AUTH_LOCK_MS,期間一律 429(對的密碼也擋)。
+  // 訊號層次:測試驗「鎖定觸發」與「成功歸零」;鎖定到期自動解鎖靠時間流逝,不在測試內。
+  const AUTH_MAX_FAILS = 10;
+  const AUTH_LOCK_MS = 15 * 60_000;
+  const authFails = new Map(); // ip → { count, lockedUntil }
   const authPassword = opts.authPassword || '';
   if (authPassword) {
     app.addHook('onRequest', async (req, reply) => {
       if (req.routeOptions?.url === '/rss/:id') return;
+      const rec = authFails.get(req.ip);
+      if (rec?.lockedUntil > Date.now()) {
+        return reply.code(429).send({ error: '嘗試次數過多,請 15 分鐘後再試' });
+      }
       const header = req.headers.authorization || '';
       if (header.startsWith('Basic ')) {
         const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
         const pass = decoded.slice(decoded.indexOf(':') + 1); // 冒號後全部是密碼(帳號忽略)
-        if (safeEqual(pass, authPassword)) return;
+        if (safeEqual(pass, authPassword)) { authFails.delete(req.ip); return; }
+        // 只有「有帶密碼但錯」才計失敗;瀏覽器初次載入的無憑證 401(登入框觸發流程)不算,
+        // 否則一頁多請求還沒輸入密碼就被鎖
+        const r = authFails.get(req.ip) || { count: 0, lockedUntil: 0 };
+        r.count++;
+        if (r.count >= AUTH_MAX_FAILS) { r.lockedUntil = Date.now() + AUTH_LOCK_MS; r.count = 0; }
+        authFails.set(req.ip, r);
       }
       reply.code(401)
         .header('www-authenticate', 'Basic realm="Shinkansen-Feed", charset="UTF-8"')
@@ -138,6 +161,7 @@ export function buildServer(ctx, opts = {}) {
   app.put('/api/settings', async (req) => {
     const body = req.body || {};
     for (const [k, v] of Object.entries(body)) {
+      if (!SETTING_KEYS.has(k)) continue; // 白名單外的鍵忽略
       // apiKey 空字串代表「不變更」,不覆寫既有金鑰
       if (SECRET_KEYS.has(k) && (v === '' || v == null)) continue;
       ctx.settings.set(k, v);

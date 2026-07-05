@@ -152,7 +152,7 @@ http://shinkansen-rss:8088/rss/<feedId>
 - **系統 prompt**：翻譯風格指令（預設台灣繁中 prompt，可改）。
 - **禁用詞黑名單**：`中國用語=台灣用語`，譯文一律不用左欄。
 - **模型計價**：各模型每 1M tokens 的自訂單價（空白 = 用內建價），用於費用統計。
-- **匯出設定**：下載設定 JSON 備份（不含金鑰）。
+- **匯出 / 匯入設定**：下載設定 JSON 備份（不含金鑰）；匯入時只讀取認得的欄位，換機搬遷免重填。
 
 ---
 
@@ -170,9 +170,13 @@ http://shinkansen-rss:8088/rss/<feedId>
 
 ## 備份
 
-資料全在 SQLite 單檔（`data/` 下）。停容器或直接複製該檔即可備份：
+資料全在 SQLite 單檔（`data/` 下）。**服務每天 04:00 會自動備份**到 `data/backups/`（輪替保留最新 7 份，一致性快照、不用停機）。
+
+要手動備份或搬到異地，複製備份檔即可：
 
 ```bash
+cp data/backups/shinkansen-feed-<日期>.sqlite  <備份位置>
+# 或停機複製主檔:
 docker compose stop app
 cp data/shinkansen-feed.sqlite  <備份位置>
 docker compose start app

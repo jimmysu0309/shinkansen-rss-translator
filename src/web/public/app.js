@@ -175,6 +175,21 @@ $('#export-settings').addEventListener('click', () => {
   a.click();
 });
 
+// 匯入設定(選檔 → PUT;與儲存共用同一條路徑,伺服器白名單守門)
+$('#import-settings').addEventListener('click', () => $('#settings-file').click());
+$('#settings-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const settings = data.settings ?? data; // 支援匯出檔({exportedAt, settings})或裸設定物件
+    await api('PUT', '/api/settings', settings);
+    await loadSettings(); // 匯入後重載畫面
+    toast('已匯入設定');
+  } catch (err) { toast('匯入失敗:' + err.message); }
+  finally { e.target.value = ''; } // 允許重複選同一檔
+});
+
 // ─── Feeds ───
 function statusBadges(counts) {
   const parts = [];

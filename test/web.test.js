@@ -52,6 +52,14 @@ describe('設定 API', () => {
     expect(ctx.settings.get('apiKey')).toBe('AQ.keep'); // 沒被清掉
   });
 
+  it('白名單外的鍵被忽略(不進 settings 表)', async () => {
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { model: 'ok', hax: 'junk', __proto__x: 1 } });
+    const res = (await app.inject({ method: 'GET', url: '/api/settings' })).json();
+    expect(res.model).toBe('ok');
+    expect(res.hax).toBeUndefined();
+    expect(ctx.settings.get('hax')).toBeUndefined();
+  });
+
   it('匯出設定:帶 content-disposition,不含 apiKey', async () => {
     await app.inject({ method: 'PUT', url: '/api/settings', payload: { apiKey: 'AQ.s', model: 'm', engine: 'google' } });
     const res = await app.inject({ method: 'GET', url: '/api/settings/export' });
@@ -468,6 +476,29 @@ describe('認證(Basic Auth,AUTH_PASSWORD)', () => {
   it('沒設 authPassword → 一切照舊(不認證)', async () => {
     const r = await app.inject({ method: 'GET', url: '/api/feeds' });
     expect(r.statusCode).toBe(200);
+  });
+
+  it('防暴力:同 IP 帶錯密碼連錯 10 次 → 鎖定,連對的密碼也 429', async () => {
+    for (let i = 0; i < 10; i++) {
+      await authApp.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', `wrong${i}`) } });
+    }
+    const locked = await authApp.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', 's3cret') } });
+    expect(locked.statusCode).toBe(429);
+  });
+
+  it('防暴力:無憑證的 401(登入框流程)不計失敗次數', async () => {
+    for (let i = 0; i < 15; i++) await authApp.inject({ method: 'GET', url: '/api/feeds' });
+    const ok = await authApp.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', 's3cret') } });
+    expect(ok.statusCode).toBe(200); // 沒被鎖
+  });
+
+  it('防暴力:登入成功即歸零,之前的失敗不累計', async () => {
+    const wrong = () => authApp.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', 'nope') } });
+    const right = () => authApp.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', 's3cret') } });
+    for (let i = 0; i < 9; i++) await wrong();
+    expect((await right()).statusCode).toBe(200); // 第 10 次前成功 → 歸零
+    for (let i = 0; i < 9; i++) await wrong();    // 再錯 9 次(若沒歸零早鎖了)
+    expect((await right()).statusCode).toBe(200);
   });
 });
 

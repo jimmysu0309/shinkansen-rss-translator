@@ -57,4 +57,19 @@ describe('fetchFullText', () => {
     await fetchFullText('https://ex.com/posts/a', { fetchImpl: fakeFetch });
     expect(saw.signal).toBeInstanceOf(AbortSignal);
   });
+
+  it('content-length 宣告超過 5MB → null(不下載)', async () => {
+    const fakeFetch = async () => ({
+      ok: true,
+      headers: { get: () => String(10 * 1024 * 1024) },
+      text: async () => { throw new Error('不應該讀 body'); },
+    });
+    expect(await fetchFullText('https://ex.com/big', { fetchImpl: fakeFetch })).toBe(null);
+  });
+
+  it('實際內容超過 5MB(未宣告長度)→ null', async () => {
+    const huge = '<p>' + 'x'.repeat(5 * 1024 * 1024 + 16) + '</p>';
+    const fakeFetch = async () => ({ ok: true, text: async () => huge });
+    expect(await fetchFullText('https://ex.com/big2', { fetchImpl: fakeFetch })).toBe(null);
+  });
 });
