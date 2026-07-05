@@ -13,7 +13,7 @@
 1. **翻譯品質難控、常漏譯** — 根因多在切段 / segment 對映的實作。
 2. **用量難追蹤** — 沒有像樣的 token / 費用紀錄。
 
-本專案用 Shinkansen 驗證過的引擎（`translateBatch` 帶序號標記 + retry + 段數對映）從源頭解決漏譯，並內建用量與費用統計。此外，**只替換文字節點、不動元素**，所以圖片、連結、粗體等 HTML 結構完整保留。
+本專案用 Shinkansen 驗證過的引擎（`translateBatch` 帶序號標記 + retry + 段數對映）從源頭解決漏譯，並內建用量與費用統計。切段時**只翻文字，元素以佔位符原樣保留**（整段送翻、語序自然），所以圖片、連結、粗體等 HTML 結構完整保留。
 
 ## 功能特色
 
@@ -24,8 +24,11 @@
 - **OPML 匯入 / 匯出**：批次搬入來源、批次輸出譯後 feed 給 Miniflux 訂閱。
 - **用量統計**：費用（USD，可自訂各模型單價）、token、快取命中率、每日費用圖、逐 feed 與逐筆明細、CSV 匯出、一鍵清除。
 - **翻譯紀錄（Log）**：抓取 / 翻譯 / 錯誤事件紀錄，可依等級 / 類別過濾、CSV 匯出、設定保留天數（預設 7 天）、一鍵清除。
+- **全文抓取**：RSS 只給摘要的 feed，可逐 feed 開啟「抓取全文」（Readability 抽正文、相對網址轉絕對）再翻譯。
 - **排程**：cron 定期自動處理所有啟用中的 feed。
 - **conditional GET**：etag / last-modified，未更新不重抓。
+- **登入密碼**：`.env` 設 `AUTH_PASSWORD` 即啟用（Basic Auth，含防暴力嘗試鎖定）；譯後 RSS 保持免認證。
+- **自我維護**：每 feed 文章上限（預設 300，可調）自動清舊文章、log 保留天數、每日自動備份 DB（輪替 7 份）、容器 log 輪替。
 
 ## 架構
 
@@ -48,11 +51,11 @@ src/
   engine.js            引擎封裝(去瀏覽器化 + 餵料 + 引擎分派)
   engine-adapters/     browser-shim(Node 版 chrome.storage 相容層)
   pipeline/            抓取 / 切段回填 / 單篇翻譯 / 編排 / RSS 輸出 / OPML
-  db/                  SQLite schema + DAO(settings/feeds/entries/usage/logs)
+  db/                  SQLite schema + DAO(settings/feeds/entries/usage/logs)+ 自動備份
   web/                 Fastify server + public/(單頁分頁式介面)
   server.js            進入點(開 DB、載 .env、排程、listen)
 vendor/shinkansen/     Shinkansen 引擎(git submodule)
-test/                  vitest(167 tests)
+test/                  vitest(179 tests)
 ```
 
 ---
@@ -72,7 +75,7 @@ git submodule update --init
 npm install
 
 # 3. 基礎設定(可選)
-cp .env.example .env      # 只設 PORT / 初始更新頻率;金鑰在 web 介面填
+cp .env.example .env      # 設 PORT / 初始更新頻率 / 登入密碼(選填);金鑰在 web 介面填
 
 # 4. 啟動
 npm start
@@ -84,7 +87,7 @@ npm start
 跑測試：
 
 ```bash
-npm test          # 167 tests;有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
+npm test          # 179 tests;有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
 ```
 
 ---
@@ -163,6 +166,7 @@ http://shinkansen-rss:8088/rss/<feedId>
 - **編輯 feed**：卡片「編輯」可改標題 / 分類 / 引擎 / 模型 / 抓全文 / 啟用。
 - **逐 feed 覆寫**：新增或編輯時可指定引擎 / 模型 / 是否抓全文。
 - **重翻失敗**：某 feed 有翻譯失敗的文章時，卡片會出現「**重翻**」按鈕，一鍵把失敗的重設並再翻一次。
+- **全部重譯**：編輯面板的「**全部重譯**」把該 feed 所有文章（含已翻）重翻一次——改模型 / prompt / 抓全文設定後套用（會重新花 token）。
 - **用量**：費用、token、快取命中率、每日圖、逐 feed 統計、逐筆明細（**每頁 50 筆分頁**）、「重新整理」、CSV 匯出、清除。
 - **紀錄**：抓取 / 翻譯 / 錯誤事件，可依等級 / 類別過濾、**每頁 50 筆分頁**、CSV 匯出、清除、設定保留天數。
 
