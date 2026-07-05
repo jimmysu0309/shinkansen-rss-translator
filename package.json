@@ -1,6 +1,6 @@
 {
   "name": "shinkansen-feed",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Self-hosted RSS feed translator powered by the Shinkansen translation engine",
   "license": "Elastic-2.0",
   "type": "module",

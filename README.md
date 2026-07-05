@@ -52,7 +52,7 @@ src/
   web/                 Fastify server + public/(單頁分頁式介面)
   server.js            進入點(開 DB、載 .env、排程、listen)
 vendor/shinkansen/     Shinkansen 引擎(git submodule)
-test/                  vitest(112 tests)
+test/                  vitest(167 tests)
 ```
 
 ---
@@ -84,7 +84,7 @@ npm start
 跑測試：
 
 ```bash
-npm test          # 112 tests;有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
+npm test          # 167 tests;有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
 ```
 
 ---
@@ -148,6 +148,7 @@ http://shinkansen-rss:8088/rss/<feedId>
 - **每批段數 / 字元上限**：分批翻譯的門檻（段數預設 50）。
 - **Gemini Temperature**：0 最穩定、越高越有創意（預設 1）。
 - **紀錄保留天數**：log 保留幾天（預設 7）。
+- **每 feed 文章上限**：每個 feed 最多保留幾篇文章（預設 300，**0** = 不限制），超過自動清掉最舊的。
 - **系統 prompt**：翻譯風格指令（預設台灣繁中 prompt，可改）。
 - **禁用詞黑名單**：`中國用語=台灣用語`，譯文一律不用左欄。
 - **模型計價**：各模型每 1M tokens 的自訂單價（空白 = 用內建價），用於費用統計。
