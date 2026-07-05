@@ -156,6 +156,13 @@ function makeEntriesDao(db) {
     UPDATE entries SET translation_status = 'error', translation_error = @err WHERE id = @id
   `);
   const delByFeed = db.prepare('DELETE FROM entries WHERE feed_id = ?');
+  // 保留最新 keep 篇(排序同 listByFeed),其餘刪除 —— 防 entries 無限成長
+  const pruneOld = db.prepare(`
+    DELETE FROM entries WHERE feed_id = @feed_id AND id NOT IN (
+      SELECT id FROM entries WHERE feed_id = @feed_id
+      ORDER BY published_at DESC, id DESC LIMIT @keep
+    )
+  `);
 
   return {
     /** 插入新條目;已存在則跳過。回傳 { inserted: bool, entry } */
@@ -217,6 +224,10 @@ function makeEntriesDao(db) {
       ).run(feedId).changes;
     },
     deleteByFeed(feedId) { return delByFeed.run(feedId).changes; },
+    /** 只保留該 feed 最新 keep 篇(published_at 新→舊,同 listByFeed 排序);回傳刪除筆數 */
+    pruneByFeed(feedId, keep) {
+      return pruneOld.run({ feed_id: feedId, keep }).changes;
+    },
   };
 }
 

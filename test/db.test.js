@@ -153,6 +153,27 @@ describe('entries DAO — 去重是核心', () => {
     expect(ctx.entries.pendingByFeed(feedId)).toHaveLength(2);
   });
 
+  it('pruneByFeed:只留最新 keep 篇(published_at 新→舊),別的 feed 不受影響', () => {
+    const feed2 = ctx.feeds.create({ source_url: 'https://ex2.com/feed' }).id;
+    for (let i = 1; i <= 5; i++) {
+      ctx.entries.upsertNew({ feed_id: feedId, guid: `g${i}`, title: `t${i}`, published_at: i * 1000 });
+    }
+    ctx.entries.upsertNew({ feed_id: feed2, guid: 'other', published_at: 1 });
+    const removed = ctx.entries.pruneByFeed(feedId, 3);
+    expect(removed).toBe(2);
+    // 留下的是 published_at 最新的 3 篇(g3, g4, g5)
+    expect(ctx.entries.listByFeed(feedId).map((e) => e.guid).sort()).toEqual(['g3', 'g4', 'g5']);
+    expect(ctx.entries.listByFeed(feed2)).toHaveLength(1); // 別的 feed 沒被掃到
+  });
+
+  it('pruneByFeed:沒 published_at 的視為最舊先刪;篇數 <= keep 不刪', () => {
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'no-date', published_at: null });
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'newer', published_at: 2000 });
+    expect(ctx.entries.pruneByFeed(feedId, 1)).toBe(1);
+    expect(ctx.entries.listByFeed(feedId)[0].guid).toBe('newer');
+    expect(ctx.entries.pruneByFeed(feedId, 5)).toBe(0); // 未超額不刪
+  });
+
   it('statusCountsByFeed:一次 GROUP BY 回各 feed 的狀態篇數', () => {
     const feed2 = ctx.feeds.create({ source_url: 'https://ex2.com/feed' }).id;
     const a = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1' }).entry;

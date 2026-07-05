@@ -174,6 +174,54 @@ describe('processFeed 編排', () => {
     expect(ctx.entries.listByFeed(feed.id)).toHaveLength(0);
   });
 
+  it('entry 上限:處理結尾清掉超額舊文章,只留最新 N 篇', async () => {
+    // 先塞 4 篇舊文章(已翻),再抓進 1 篇新的;上限 3 → 清掉最舊 2 篇
+    for (let i = 1; i <= 4; i++) {
+      const { entry } = ctx.entries.upsertNew({ feed_id: feed.id, guid: `old${i}`, published_at: i * 1000 }, fixedNow());
+      ctx.entries.markDone(entry.id, {});
+    }
+    const items = [{ guid: 'new1', title: 'N', contentHtml: '<p>x</p>', published_at: 9000 }];
+    const r = await processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, fetchFeed: makeFetch(items), translateEntry: fakeTranslate,
+      maxEntriesPerFeed: 3,
+    });
+    expect(r.pruned).toBe(2);
+    expect(ctx.entries.listByFeed(feed.id).map((e) => e.guid).sort()).toEqual(['new1', 'old3', 'old4']);
+    expect(ctx.logs.query().some((l) => /清理舊文章/.test(l.message))).toBe(true);
+  });
+
+  it('entry 上限:來源 XML 列出的篇數超過上限 → 不刪(防「刪了又重抓重翻」迴圈)', async () => {
+    // 上限 2,但來源一次給 4 篇 → 保留數取 max(2, 4),全數保留
+    const items = [1, 2, 3, 4].map((i) => ({ guid: `g${i}`, title: `t${i}`, contentHtml: '<p>x</p>', published_at: i * 1000 }));
+    const r1 = await processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, fetchFeed: makeFetch(items), translateEntry: fakeTranslate,
+      maxEntriesPerFeed: 2,
+    });
+    expect(r1.pruned).toBe(0);
+    expect(ctx.entries.listByFeed(feed.id)).toHaveLength(4);
+    // 再處理一次:沒有任何文章被當成新的重翻
+    const r2 = await processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, fetchFeed: makeFetch(items), translateEntry: fakeTranslate,
+      maxEntriesPerFeed: 2,
+    });
+    expect(r2.added).toBe(0);
+    expect(r2.translated).toBe(0);
+    expect(ctx.usage.getStats().calls).toBe(4); // 只有第一輪的 4 次翻譯
+  });
+
+  it('entry 上限:304 未更新 → 不清(看不到來源清單,清了有重翻風險)', async () => {
+    for (let i = 1; i <= 4; i++) {
+      const { entry } = ctx.entries.upsertNew({ feed_id: feed.id, guid: `old${i}`, published_at: i * 1000 }, fixedNow());
+      ctx.entries.markDone(entry.id, {});
+    }
+    const r = await processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, translateEntry: fakeTranslate, maxEntriesPerFeed: 2,
+      fetchFeed: async () => ({ notModified: true, items: [], etag: 'W/"v1"', lastModified: null }),
+    });
+    expect(r.pruned).toBe(0);
+    expect(ctx.entries.listByFeed(feed.id)).toHaveLength(4);
+  });
+
   it('寫入 log:抓取 + 逐篇翻譯 + 失敗', async () => {
     const items = [
       { guid: 'g1', title: 'ok', contentHtml: '<p>x</p>', published_at: 1 },
