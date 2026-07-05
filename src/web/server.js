@@ -10,7 +10,7 @@ import Fastify from 'fastify';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildFeedXml } from '../pipeline/rss-output.js';
-import { processFeed, isFeedInFlight } from '../pipeline/run.js';
+import { processFeed, isFeedInFlight, DEFAULT_MAX_ENTRIES_PER_FEED } from '../pipeline/run.js';
 import { fetchFeed as defaultFetchFeed } from '../pipeline/fetch-feed.js';
 import {
   DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, ENGINES,
@@ -117,6 +117,7 @@ export function buildServer(ctx, opts = {}) {
     maxCharsPerBatch: DEFAULT_MAX_CHARS_PER_BATCH,
     temperature: DEFAULT_TEMPERATURE,
     logRetentionDays: DEFAULT_LOG_RETENTION_DAYS,
+    maxEntriesPerFeed: DEFAULT_MAX_ENTRIES_PER_FEED,
     logLevels: ['info', 'warn', 'error'],
     logCategories: ['fetch', 'translate', 'refresh', 'opml', 'system'],
     pollCron: DEFAULT_POLL_CRON,

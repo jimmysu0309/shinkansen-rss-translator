@@ -209,6 +209,32 @@ describe('processFeed 編排', () => {
     expect(ctx.usage.getStats().calls).toBe(4); // 只有第一輪的 4 次翻譯
   });
 
+  it('entry 上限:讀設定頁的 maxEntriesPerFeed(不靠注入)', async () => {
+    ctx.settings.set('maxEntriesPerFeed', 3);
+    for (let i = 1; i <= 5; i++) {
+      const { entry } = ctx.entries.upsertNew({ feed_id: feed.id, guid: `old${i}`, published_at: i * 1000 }, fixedNow());
+      ctx.entries.markDone(entry.id, {});
+    }
+    const r = await processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, fetchFeed: makeFetch([]), translateEntry: fakeTranslate,
+    });
+    expect(r.pruned).toBe(2);
+    expect(ctx.entries.listByFeed(feed.id)).toHaveLength(3);
+  });
+
+  it('entry 上限:設 0 = 不限制,不清理', async () => {
+    ctx.settings.set('maxEntriesPerFeed', 0);
+    for (let i = 1; i <= 5; i++) {
+      const { entry } = ctx.entries.upsertNew({ feed_id: feed.id, guid: `old${i}`, published_at: i * 1000 }, fixedNow());
+      ctx.entries.markDone(entry.id, {});
+    }
+    const r = await processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, fetchFeed: makeFetch([]), translateEntry: fakeTranslate,
+    });
+    expect(r.pruned).toBe(0);
+    expect(ctx.entries.listByFeed(feed.id)).toHaveLength(5);
+  });
+
   it('entry 上限:304 未更新 → 不清(看不到來源清單,清了有重翻風險)', async () => {
     for (let i = 1; i <= 4; i++) {
       const { entry } = ctx.entries.upsertNew({ feed_id: feed.id, guid: `old${i}`, published_at: i * 1000 }, fixedNow());

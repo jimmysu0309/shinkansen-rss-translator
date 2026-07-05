@@ -16,8 +16,8 @@ import {
   DEFAULT_MAX_UNITS_PER_BATCH, DEFAULT_MAX_CHARS_PER_BATCH, DEFAULT_TEMPERATURE,
 } from '../engine.js';
 
-// 每個 feed 最多保留的文章數(超過的舊文章在每次處理結尾清掉,防 DB 無限成長)
-export const MAX_ENTRIES_PER_FEED = 300;
+// 每個 feed 最多保留的文章數預設值(可在設定頁調整;0 = 不限制)
+export const DEFAULT_MAX_ENTRIES_PER_FEED = 300;
 
 // 進行中的 feed(id 集合):同一 feed 同時只允許一個 processFeed。
 // 沒有這道鎖,排程觸發與手動刷新重疊時會各自讀到同一批 pending → 同批文章翻兩次(重複扣 token)。
@@ -152,12 +152,13 @@ async function processFeedLocked(ctx, feed, deps) {
     }
   }
 
-  // 4. 清舊文章:只留最新 N 篇(304 沒新文章,跳過)。
+  // 4. 清舊文章:只留最新 N 篇(304 沒新文章,跳過;N=0 不限制)。
   //    保留數取 max(N, 本次抓到篇數):若來源 XML 本身列出超過 N 篇,砍掉的下次抓取
   //    會被當新文章重插 → 重翻 → 再砍,token 無限燒;永不刪「來源還在列的文章」即可斷這個迴圈。
   let pruned = 0;
-  if (!res.notModified) {
-    const cap = deps.maxEntriesPerFeed ?? MAX_ENTRIES_PER_FEED;
+  const capRaw = deps.maxEntriesPerFeed ?? ctx.settings.get('maxEntriesPerFeed', DEFAULT_MAX_ENTRIES_PER_FEED);
+  const cap = Number(capRaw);
+  if (!res.notModified && Number.isFinite(cap) && cap > 0) {
     pruned = ctx.entries.pruneByFeed(feed.id, Math.max(cap, res.items.length));
     if (pruned) log('info', 'system', `清理舊文章:${feed.title || feed.source_url} 刪除 ${pruned} 篇(保留最新 ${cap} 篇)`);
   }

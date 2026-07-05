@@ -275,6 +275,7 @@ describe('Log API', () => {
   it('defaults 提供保留天數(7)與 filter 選項', async () => {
     const d = (await app.inject({ method: 'GET', url: '/api/defaults' })).json();
     expect(d.logRetentionDays).toBe(7);
+    expect(d.maxEntriesPerFeed).toBe(300); // 每 feed 文章上限預設(前端預填用)
     expect(d.logLevels).toContain('error');
     expect(d.logCategories).toContain('translate');
   });

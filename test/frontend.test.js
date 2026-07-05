@@ -20,7 +20,7 @@ const DEFAULTS = {
   model: 'gemini-3.1-flash-lite', models: [{ id: 'gemini-3.1-flash-lite', label: 'Lite' }],
   engines: [{ id: 'gemini', label: 'Gemini' }, { id: 'google', label: 'Google' }],
   systemPrompt: 'sp', forbiddenTerms: [{ forbidden: '視頻', replacement: '影片' }], targetLanguage: 'zh-TW',
-  maxUnitsPerBatch: 50, maxCharsPerBatch: 3500, temperature: 1, logRetentionDays: 7,
+  maxUnitsPerBatch: 50, maxCharsPerBatch: 3500, temperature: 1, logRetentionDays: 7, maxEntriesPerFeed: 300,
   logLevels: ['info', 'warn', 'error'], logCategories: ['fetch', 'translate'],
   pollCron: '*/15 * * * *', pollCronOptions: [{ value: '*/15 * * * *', label: '每 15 分鐘' }, { value: '', label: '關閉' }],
   modelPricing: { 'gemini-3.1-flash-lite': { inputPerMTok: 0.25, outputPerMTok: 1.5 } }, hasApiKey: true,
@@ -124,5 +124,7 @@ describe('前端:設定頁載入', () => {
     expect(document.querySelector('#apikey-status').textContent).toContain('已設定');
     // 禁用詞從 DEFAULTS 預填
     expect(document.querySelector('#s-forbidden').value).toContain('視頻=影片');
+    // 每 feed 文章上限從 DEFAULTS 預填
+    expect(document.querySelector('#s-maxentries').value).toBe('300');
   });
 });

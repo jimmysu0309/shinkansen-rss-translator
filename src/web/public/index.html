@@ -95,6 +95,9 @@
           <label>紀錄保留天數
             <input type="number" id="s-logdays" min="1" max="365">
           </label>
+          <label>每 feed 文章上限<small class="hint-inline"><strong>0</strong> = 不限制</small>
+            <input type="number" id="s-maxentries" min="0" max="10000" step="10">
+          </label>
           <label>更新頻率<small class="hint-inline">多久自動抓取+翻譯所有 feed</small>
             <select id="s-pollcron"></select>
           </label>
