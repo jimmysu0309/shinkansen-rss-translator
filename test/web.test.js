@@ -424,6 +424,52 @@ describe('併發保護(同 feed 同時只跑一個)', () => {
   });
 });
 
+describe('認證(Basic Auth,AUTH_PASSWORD)', () => {
+  const basic = (user, pass) => 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+  let authCtx, authApp;
+
+  beforeEach(async () => {
+    authCtx = createDb(':memory:');
+    authApp = buildServer(authCtx, { apiKey: 'k', processDeps: fakeProcessDeps, authPassword: 's3cret' });
+    // 造一個 feed 供 /rss/:id 測豁免
+    await authApp.inject({
+      method: 'POST', url: '/api/feeds',
+      headers: { authorization: basic('x', 's3cret') },
+      payload: { source_url: 'https://ex.com/feed' },
+    });
+  });
+
+  it('沒帶認證 → 401 + www-authenticate', async () => {
+    const r = await authApp.inject({ method: 'GET', url: '/api/feeds' });
+    expect(r.statusCode).toBe(401);
+    expect(r.headers['www-authenticate']).toContain('Basic');
+  });
+
+  it('密碼錯 → 401;密碼對(帳號隨意)→ 200', async () => {
+    const bad = await authApp.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', 'wrong') } });
+    expect(bad.statusCode).toBe(401);
+    const ok = await authApp.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('任何帳號', 's3cret') } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toHaveLength(1);
+  });
+
+  it('/rss/:id 豁免認證(Miniflux 要能免登入抓 feed)', async () => {
+    const r = await authApp.inject({ method: 'GET', url: '/rss/1' });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['content-type']).toContain('atom');
+  });
+
+  it('dot-segment 混淆路徑(/rss/../api/…)不能繞過認證', async () => {
+    const r = await authApp.inject({ method: 'GET', url: '/rss/../api/settings' });
+    expect(r.statusCode).not.toBe(200); // 豁免判斷用 route pattern,原始路徑騙不到
+  });
+
+  it('沒設 authPassword → 一切照舊(不認證)', async () => {
+    const r = await app.inject({ method: 'GET', url: '/api/feeds' });
+    expect(r.statusCode).toBe(200);
+  });
+});
+
 describe('RSS 輸出端點', () => {
   it('GET /rss/:id → Atom,content-type 正確,含譯文', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', title: 'Ex' } })).json();

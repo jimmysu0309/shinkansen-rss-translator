@@ -123,7 +123,7 @@ docker compose -f docker-compose.yml -f docker-compose.miniflux.yml up -d --buil
 http://shinkansen-rss:8088/rss/<feedId>
 ```
 
-> 介面本身不設密碼，建議只綁 `127.0.0.1`，對外存取自行用反向代理 / Tailscale / VPN 限制。
+> 在 `.env` 設 `AUTH_PASSWORD` 可為介面與 API 加上登入密碼（HTTP Basic Auth，帳號隨意）；譯後 RSS（`/rss/…`）一律免認證，閱讀器才抓得到。沒設密碼時建議只綁 `127.0.0.1`，對外存取用反向代理 / Tailscale / VPN 限制。
 
 ---
 
@@ -136,6 +136,7 @@ http://shinkansen-rss:8088/rss/<feedId>
 | `PORT` | 容器內監聽埠 | 8088 |
 | `POLL_CRON` | **首次啟動**的預設更新頻率（DB 未設過時採用；之後以設定頁為準） | `*/15 * * * *` |
 | `DB_PATH` | SQLite 路徑 | `data/shinkansen-feed.sqlite` |
+| `AUTH_PASSWORD` | 介面與 API 的登入密碼（Basic Auth，帳號隨意）；不設 = 不認證 | （無） |
 
 > **Gemini 金鑰不再放 `.env`**。一律在 web 介面「設定」頁輸入，存在伺服器本機 SQLite（不外洩到瀏覽器、不進 git）。
 

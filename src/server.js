@@ -4,6 +4,7 @@
 //   DB_PATH          SQLite 檔路徑(預設 data/shinkansen-feed.sqlite)
 //   PORT             監聽埠(預設 8088)
 //   POLL_CRON        首次啟動的預設更新頻率(僅當 DB 尚未設過時採用;之後以 web 設定為準)
+//   AUTH_PASSWORD    網頁介面與 API 的 Basic Auth 密碼;不設 = 不認證(僅限受信任內網)
 //
 // 註:Gemini 金鑰改由 web 介面「設定」頁輸入(存 SQLite),不再讀環境變數。
 
@@ -52,8 +53,15 @@ function applyPollCron(cronStr) {
 }
 
 // buildServer 需要 onPollCronChange(設定頁改頻率時即時重排)
-const app = buildServer(ctx, { logger: true, onPollCronChange: applyPollCron });
+const app = buildServer(ctx, {
+  logger: true,
+  onPollCronChange: applyPollCron,
+  authPassword: process.env.AUTH_PASSWORD || '',
+});
 await registerStatic(app);
+if (!process.env.AUTH_PASSWORD) {
+  app.log.warn('未設定 AUTH_PASSWORD:網頁介面與 API 無認證,僅建議在受信任內網使用');
+}
 
 // 啟動清理 log
 const pruned = pruneLogs(ctx, retention());

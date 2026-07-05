@@ -7,6 +7,7 @@
 //   ✗ 不驗:前端 UI 互動(那靠瀏覽器 / 人工);真實 listen(server.js entry 負責)
 
 import Fastify from 'fastify';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildFeedXml } from '../pipeline/rss-output.js';
 import { processFeed, isFeedInFlight } from '../pipeline/run.js';
@@ -55,9 +56,37 @@ function isHttpUrl(u) {
   try { return ['http:', 'https:'].includes(new URL(u).protocol); } catch { return false; }
 }
 
+// 常數時間比較(先 sha256 等長化),避免逐字元比對的 timing 洩漏
+function safeEqual(a, b) {
+  const ha = createHash('sha256').update(String(a)).digest();
+  const hb = createHash('sha256').update(String(b)).digest();
+  return timingSafeEqual(ha, hb);
+}
+
 export function buildServer(ctx, opts = {}) {
   // trustProxy:反向代理(https)後面時,selfUrl / OPML 網址才會用 x-forwarded-* 組出正確 scheme+host
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: true });
+
+  // ─── 認證(HTTP Basic)───
+  // opts.authPassword 有值才啟用;帳號不限、只驗密碼。
+  // 豁免 /rss/:id:譯後 feed 要讓 Miniflux 等閱讀器免認證抓取。
+  // 用 req.routeOptions.url(路由解析後的 pattern)判斷豁免,不比對原始 req.url ——
+  // 原始路徑可被 /rss/../api/x 這類 dot-segment 混淆,route pattern 不會。
+  const authPassword = opts.authPassword || '';
+  if (authPassword) {
+    app.addHook('onRequest', async (req, reply) => {
+      if (req.routeOptions?.url === '/rss/:id') return;
+      const header = req.headers.authorization || '';
+      if (header.startsWith('Basic ')) {
+        const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
+        const pass = decoded.slice(decoded.indexOf(':') + 1); // 冒號後全部是密碼(帳號忽略)
+        if (safeEqual(pass, authPassword)) return;
+      }
+      reply.code(401)
+        .header('www-authenticate', 'Basic realm="Shinkansen-Feed", charset="UTF-8"')
+        .send({ error: '需要登入' });
+    });
+  }
   // 有效金鑰:先看 settings(webui 填的),再看啟動 opts / 環境變數
   // 金鑰只從 web 設定(SQLite)取;不再讀 .env / 環境變數。opts.apiKey 供測試注入。
   const apiKey = () => ctx.settings.get('apiKey', '') || opts.apiKey || '';
