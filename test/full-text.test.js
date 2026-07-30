@@ -130,3 +130,35 @@ describe('og:image hero 補圖', () => {
     expect(out).not.toContain('<figure>');
   });
 });
+
+// Readability 重複抽取去重(離線)。
+//
+// 訊號層次:
+//   ✓ 同 pathname 的重複圖只留第一張(含空殼 figure 一併移除)
+//   ✓ 相鄰重複文字段(> 20 字)只留一份;不相鄰 / 短句不動
+//   ✓ skip link(#錨點整段)移除
+//   ✗ 不驗:真實站點雙版本結構的完整樣態(以最小結構代表)
+describe('Readability 重複抽取去重', () => {
+  const PAGE2 = `<!DOCTYPE html><html><head></head><body><article>
+    <p><a href="#content">跳至主要內容</a></p>
+    <p>這段導言重複了兩次,長度超過二十個字才會觸發相鄰去重的保守規則喔。</p>
+    <p>這段導言重複了兩次,長度超過二十個字才會觸發相鄰去重的保守規則喔。</p>
+    <figure><img src="https://cdn.ex.com/lead.jpg?w=376"></figure>
+    <figure><img src="https://cdn.ex.com/lead.jpg?w=750"></figure>
+    <p>正文第一段,內容夠長,readability 才會保留下來當作正文的一部分,不會被丟掉。</p>
+    <p>短句重複</p><p>短句重複</p>
+    <p>正文第二段也要夠長才會被保留下來,再多寫一點字數充版面確保抽得出正文喔。</p>
+  </article></body></html>`;
+
+  it('重複 lead 圖只留一張、重複導言只留一份、skip link 移除', () => {
+    const out = extractReadable(PAGE2, 'https://ex.com/a');
+    expect(out.match(/lead\.jpg/g).length).toBe(1);
+    expect(out.match(/這段導言重複了兩次/g).length).toBe(1);
+    expect(out).not.toContain('跳至主要內容');
+  });
+
+  it('短句重複(<= 20 字)不動', () => {
+    const out = extractReadable(PAGE2, 'https://ex.com/a');
+    expect(out.match(/短句重複/g).length).toBe(2);
+  });
+});

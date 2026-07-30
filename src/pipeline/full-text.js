@@ -39,7 +39,53 @@ export function extractReadable(html, url) {
     return null;
   }
   if (!article || !article.content) return null;
-  return maybePrependHero(absolutizeUrls(article.content, url), ogImage);
+  return maybePrependHero(dedupeExtracted(absolutizeUrls(article.content, url)), ogImage);
+}
+
+/**
+ * Readability 重複抽取去重(通則):部分站點(The Verge 等)同一份內容在頁面上
+ * 放兩份(桌機 / 手機雙版本、lightbox 複本),Readability 兩份全收,正文出現
+ * 重複的 lead image 與導言。三條保守規則:
+ *   1. 重複圖:src pathname 與前面任一張相同 → 移除後面那張(連同只剩空殼的
+ *      figure / picture 外層)
+ *   2. 相鄰重複文字塊:與「前一個 element 兄弟」trimmed 文字完全相同且 > 20 字
+ *      → 移除後者(只比相鄰,避免誤刪合法的重複句)
+ *   3. skip link:整段只有一個 href="#…" 的無障礙跳轉連結(「跳至主要內容」
+ *      / Skip to content)→ 移除
+ */
+function dedupeExtracted(content) {
+  const { document } = parseHTML(`<!DOCTYPE html><html><body>${content}</body></html>`);
+  // 1. 重複圖(pathname 比對,忽略 CDN 參數)
+  const seen = new Set();
+  for (const img of [...document.querySelectorAll('img')]) {
+    const src = img.getAttribute('src');
+    if (!src) continue;
+    let path;
+    try { path = new URL(src).pathname; } catch { continue; }
+    if (seen.has(path)) {
+      let victim = img;
+      const wrap = img.closest('figure, picture');
+      // figure 內除了這張圖沒有別的內容(圖說歸第一份)→ 整個 figure 移除
+      if (wrap && wrap.querySelectorAll('img').length === 1) victim = wrap;
+      victim.remove();
+    } else {
+      seen.add(path);
+    }
+  }
+  // 2. 相鄰重複文字塊
+  for (const el of [...document.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6')]) {
+    const prev = el.previousElementSibling;
+    if (!prev || prev.tagName !== el.tagName) continue;
+    const t = el.textContent.trim();
+    if (t.length > 20 && t === prev.textContent.trim()) el.remove();
+  }
+  // 3. skip link 段落
+  for (const a of [...document.querySelectorAll('a[href^="#"]')]) {
+    const p = a.parentElement;
+    if (p && p.tagName === 'P' && p.children.length === 1 &&
+        p.textContent.trim() === a.textContent.trim()) p.remove();
+  }
+  return document.body.innerHTML;
 }
 
 // 讀頁面宣告的社群分享主圖(og:image 優先,twitter:image 備援),相對網址以文章網址解析
