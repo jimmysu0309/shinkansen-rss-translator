@@ -22,20 +22,79 @@ const Readability = _mod.exports;
 
 /**
  * 從一頁 HTML 抽出正文(Readability),相對網址轉絕對。
+ * 正文開頭沒有 hero 等級的圖時,以頁面 og:image 前置補 hero(見 maybePrependHero)。
  * @param {string} html 整頁 HTML
  * @param {string} url  該頁網址(解析相對連結用)
  * @returns {string|null} 正文 HTML;抽不出來回 null
  */
 export function extractReadable(html, url) {
   let article;
+  let ogImage = null;
   try {
     const { document } = parseHTML(html);
+    // og:image 必須在 Readability.parse() 之前讀——parse 會就地改寫 document
+    ogImage = readOgImage(document, url);
     article = new Readability(document).parse();
   } catch {
     return null;
   }
   if (!article || !article.content) return null;
-  return absolutizeUrls(article.content, url);
+  return maybePrependHero(absolutizeUrls(article.content, url), ogImage);
+}
+
+// 讀頁面宣告的社群分享主圖(og:image 優先,twitter:image 備援),相對網址以文章網址解析
+function readOgImage(document, base) {
+  const meta =
+    document.querySelector('meta[property="og:image"]') ||
+    document.querySelector('meta[property="og:image:url"]') ||
+    document.querySelector('meta[name="twitter:image"]');
+  const raw = meta && meta.getAttribute('content');
+  if (!raw) return null;
+  try {
+    const u = new URL(raw.trim(), base);
+    return /^https?:$/.test(u.protocol) ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+// 正文開頭視為「已有 hero」的檢查範圍(字元),與小圖(頭像 / icon)寬度門檻
+const HERO_SCAN_CHARS = 600;
+const HERO_MIN_WIDTH = 200;
+
+/**
+ * og:image hero 補圖:Readability 常把正文容器外的 lead image 丟掉(The Verge 等
+ * 新聞站 hero 在 header 區)。通則補法——滿足以下三者才前置 hero,避免重複或蓋掉
+ * 站方原有 lead:
+ *   1. 頁面有 og:image(文章專屬主圖,新聞站幾乎都有)
+ *   2. 正文裡沒有同一張圖(以 URL pathname 比對,忽略 CDN 參數差異)
+ *   3. 正文開頭(前 HERO_SCAN_CHARS 字)沒有 hero 等級的圖——width 屬性 >=
+ *      HERO_MIN_WIDTH 或未標寬度的圖視為 hero;頭像等小圖(width < 門檻)不算
+ */
+function maybePrependHero(content, ogImage) {
+  if (!ogImage) return content;
+  let heroPath;
+  try { heroPath = new URL(ogImage).pathname; } catch { return content; }
+  const { document } = parseHTML(`<!DOCTYPE html><html><body>${content}</body></html>`);
+  for (const img of document.querySelectorAll('img')) {
+    const src = img.getAttribute('src');
+    if (!src) continue;
+    try {
+      if (new URL(src).pathname === heroPath) return content; // 正文已有同一張,不重複
+    } catch { /* 相對 / 壞網址不比對 */ }
+  }
+  const head = content.slice(0, HERO_SCAN_CHARS);
+  const early = head.match(/<img[^>]*>/i);
+  if (early) {
+    const w = early[0].match(/width=["']?(\d+)/i);
+    if (!w || Number(w[1]) >= HERO_MIN_WIDTH) return content; // 開頭已有 hero 等級圖
+  }
+  return `<figure><img src="${escapeAttr(ogImage)}" alt=""></figure>` + content;
+}
+
+// 屬性值跳脫(og:image URL 可能含 & 等字元)
+function escapeAttr(s) {
+  return s.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
 }
 
 /**

@@ -73,3 +73,60 @@ describe('fetchFullText', () => {
     expect(await fetchFullText('https://ex.com/big2', { fetchImpl: fakeFetch })).toBe(null);
   });
 });
+
+// og:image hero 補圖(離線)。
+//
+// 訊號層次:
+//   ✓ Readability 丟掉 lead image 時,og:image 前置為 hero
+//   ✓ 正文已有同一張圖(pathname 相同、CDN 參數不同)→ 不重複前置
+//   ✓ 正文開頭已有 hero 等級圖(width >= 200 或未標寬)→ 不前置
+//   ✓ 開頭只有頭像小圖(width < 200)→ 照樣前置 hero
+//   ✗ 不驗:真實站點 og:image 品質(站方放 logo 當 og:image 的情況)
+describe('og:image hero 補圖', () => {
+  const makePage = ({ og, bodyExtra = '' }) => `<!DOCTYPE html><html><head>
+    ${og ? `<meta property="og:image" content="${og}">` : ''}
+  </head><body><article>
+    <h1>標題</h1>${bodyExtra}
+    <p>這是文章第一段,內容夠長,readability 才會保留下來當作正文的一部分,不會被當成雜訊丟掉。</p>
+    <p>第二段也要夠長才會被保留下來,再多寫一點字數充版面確保 readability 抽得出正文喔。</p>
+  </article></body></html>`;
+
+  it('正文沒圖 + 有 og:image → 前置 hero figure', () => {
+    const out = extractReadable(
+      makePage({ og: 'https://cdn.ex.com/hero.jpg?w=1200' }), 'https://ex.com/a');
+    expect(out.startsWith('<figure><img src="https://cdn.ex.com/hero.jpg?w=1200"')).toBe(true);
+  });
+
+  it('正文已有同一張圖(pathname 同、參數不同)→ 不重複', () => {
+    const out = extractReadable(
+      makePage({
+        og: 'https://cdn.ex.com/hero.jpg?w=1200',
+        bodyExtra: '<p><img src="https://cdn.ex.com/hero.jpg?w=640"> 圖說文字也湊一點長度</p>',
+      }), 'https://ex.com/a');
+    expect(out.match(/hero\.jpg/g).length).toBe(1);
+    expect(out.startsWith('<figure>')).toBe(false);
+  });
+
+  it('開頭已有 hero 等級圖(未標寬度)→ 不前置', () => {
+    const out = extractReadable(
+      makePage({
+        og: 'https://cdn.ex.com/hero.jpg',
+        bodyExtra: '<figure><img src="https://cdn.ex.com/lead.jpg"></figure>',
+      }), 'https://ex.com/a');
+    expect(out).not.toContain('hero.jpg');
+  });
+
+  it('開頭只有頭像小圖(width=36)→ 照樣前置 hero', () => {
+    const out = extractReadable(
+      makePage({
+        og: 'https://cdn.ex.com/hero.jpg',
+        bodyExtra: '<p><img src="https://cdn.ex.com/avatar.jpg" width="36"> 作者頭像列</p>',
+      }), 'https://ex.com/a');
+    expect(out.startsWith('<figure><img src="https://cdn.ex.com/hero.jpg"')).toBe(true);
+  });
+
+  it('沒有 og:image → 正文不動', () => {
+    const out = extractReadable(makePage({ og: null }), 'https://ex.com/a');
+    expect(out).not.toContain('<figure>');
+  });
+});
