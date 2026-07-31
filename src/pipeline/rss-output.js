@@ -36,6 +36,8 @@ export function buildFeedXml({ feed, entries, selfUrl }) {
       title: (done && e.title_translated) || e.title || '(無標題)',
       id: e.guid,
       link: e.url || feed.source_url,
+      // 作者保留原名不翻譯;沒帶會讓下游(Miniflux → Readwise)整條丟失作者
+      author: e.author ? [{ name: e.author }] : undefined,
       content: (done && e.content_translated) || e.content_html || '',
       date: e.published_at ? new Date(e.published_at) : new Date(e.created_at || 0),
     });

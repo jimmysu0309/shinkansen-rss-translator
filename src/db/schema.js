@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS entries (
   guid                   TEXT NOT NULL,
   url                    TEXT,
   title                  TEXT,
+  author                 TEXT,     -- 原文作者名(不翻譯;輸出 feed 帶給 Miniflux → Readwise)
   title_translated       TEXT,
   content_html           TEXT,     -- 原文(可能經 readability 抽全文)
   content_translated     TEXT,     -- 譯文 HTML(保留結構與圖片)

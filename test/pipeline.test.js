@@ -35,6 +35,26 @@ describe('parseFeedXml', () => {
     expect(items[0].contentHtml).toContain('<b>content</b>');
     expect(items[0].published_at).toBe(Date.parse('Wed, 02 Jul 2025 10:00:00 GMT'));
   });
+
+  it('作者正規化:RSS dc:creator / Atom author,缺作者回 null', async () => {
+    const rss = `<?xml version="1.0"?>
+      <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <channel><title>R</title>
+          <item><title>有作者</title><guid>r1</guid><dc:creator>袁莉</dc:creator></item>
+          <item><title>沒作者</title><guid>r2</guid></item>
+        </channel>
+      </rss>`;
+    const r = await parseFeedXml(rss);
+    expect(r.items[0].author).toBe('袁莉');
+    expect(r.items[1].author).toBe(null);
+
+    const atom = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom"><title>A</title>
+        <entry><title>x</title><id>a1</id><author><name>Emma Roth</name></author></entry>
+      </feed>`;
+    const a = await parseFeedXml(atom);
+    expect(a.items[0].author).toBe('Emma Roth');
+  });
 });
 
 // ─── processFeed 編排(離線,注入 fake)───

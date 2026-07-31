@@ -46,6 +46,16 @@ describe('buildFeedXml', () => {
     expect(count).toBe(2);
   });
 
+  it('有 author 的篇輸出 <author><name>,沒有的不輸出', () => {
+    const entries = [
+      { guid: 'a', translation_status: 'done', author: 'Emma Roth', title_translated: 'A譯', content_translated: '<p>a</p>', published_at: 2 },
+      { guid: 'b', translation_status: 'done', author: null, title_translated: 'B譯', content_translated: '<p>b</p>', published_at: 1 },
+    ];
+    const xml = buildFeedXml({ feed, entries, selfUrl: 'https://afu/rss/1' });
+    expect(xml).toContain('<name>Emma Roth</name>');
+    expect((xml.match(/<author>/g) || []).length).toBe(1);
+  });
+
   it('空 entries → 合法空 Atom', () => {
     const xml = buildFeedXml({ feed, entries: [], selfUrl: 'https://afu/rss/1' });
     expect(xml).toContain('<feed');

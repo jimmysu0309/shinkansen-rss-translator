@@ -8,7 +8,12 @@
 //   ✓ usage 記錄與統計加總
 //   ✗ 不驗:真實檔案持久化(WAL/併發);那在部署階段驗
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { createDb } from '../src/db/index.js';
+import { SCHEMA_SQL } from '../src/db/schema.js';
 
 let ctx;
 beforeEach(() => { ctx = createDb(':memory:'); });
@@ -92,6 +97,15 @@ describe('entries DAO — 去重是核心', () => {
     expect(r2.inserted).toBe(false);          // 去重:沒插入
     expect(ctx.entries.listByFeed(feedId).length).toBe(1);
     expect(ctx.entries.getByGuid(feedId, 'g1').title).toBe('A'); // 保留原本,不覆寫
+  });
+
+  it('author 隨插入存放;重抓時只補缺、不覆寫既有值', () => {
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1', title: 'A' });          // 舊條目沒作者
+    expect(ctx.entries.getByGuid(feedId, 'g1').author).toBe(null);
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1', author: 'Emma Roth' }); // 重抓 → 補值
+    expect(ctx.entries.getByGuid(feedId, 'g1').author).toBe('Emma Roth');
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1', author: '別人' });      // 已有 → 不覆寫
+    expect(ctx.entries.getByGuid(feedId, 'g1').author).toBe('Emma Roth');
   });
 
   it('不同 feed 的相同 guid 各自獨立', () => {
@@ -297,6 +311,30 @@ describe('logs DAO', () => {
     ctx.logs.append({ ts: 2, level: 'info', message: 'b' });
     expect(ctx.logs.clear()).toBe(2);
     expect(ctx.logs.query()).toHaveLength(0);
+  });
+});
+
+describe('migration:舊 DB 補 author 欄', () => {
+  it('開啟沒有 author 欄的既有 DB → createDb 自動 ALTER 補上,舊資料保留', () => {
+    const dbPath = join(mkdtempSync(join(tmpdir(), 'skf-migrate-')), 'old.sqlite');
+    // 模擬部署中的舊 DB:拿現行 schema 去掉 author 欄行(等同加欄前的版本)
+    const oldSchema = SCHEMA_SQL.replace(/^\s*author\s+TEXT.*\n/m, '');
+    expect(oldSchema).not.toContain('author'); // 護欄:確認真的拿掉了
+    const old = new Database(dbPath);
+    old.exec(oldSchema);
+    old.exec(`
+      INSERT INTO feeds (source_url, created_at) VALUES ('https://ex.com/feed', 1);
+      INSERT INTO entries (feed_id, guid, title, created_at) VALUES (1, 'g1', '舊文章', 1);
+    `);
+    old.close();
+
+    const migrated = createDb(dbPath);
+    const e = migrated.entries.getByGuid(1, 'g1');
+    expect(e.title).toBe('舊文章');
+    expect(e.author).toBe(null); // 欄位存在且為空
+    migrated.entries.upsertNew({ feed_id: 1, guid: 'g1', author: 'Emma Roth' });
+    expect(migrated.entries.getByGuid(1, 'g1').author).toBe('Emma Roth');
+    migrated.db.close();
   });
 });
 

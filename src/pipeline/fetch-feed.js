@@ -3,7 +3,7 @@
 // parseFeedXml(xml) 是純函式(可離線測);fetchFeed(url, opts) 加上網路與 304 處理。
 //
 // 訊號層次:
-//   ✓ parseFeedXml:把各種 feed 格式正規化成統一 item 形狀(guid/title/url/contentHtml/published_at)
+//   ✓ parseFeedXml:把各種 feed 格式正規化成統一 item 形狀(guid/title/url/author/contentHtml/published_at)
 //   ✓ fetchFeed:304 Not Modified → 不重抓;回傳新的 etag/last-modified
 //   ✗ 不驗:真實網路(整合/部署階段驗);單元測試用注入的 fetch
 
@@ -26,11 +26,20 @@ function toEpoch(item) {
   return Number.isNaN(t) ? null : t;
 }
 
+function pickAuthor(item) {
+  // rss-parser 的欄位形狀:RSS dc:creator → item.creator(人名);
+  // RSS <author> → 兩者皆有(email 格式);Atom <author><name> → 只有 item.author。
+  // 優先 creator(人名),退 author;非字串(多作者物件等罕見形狀)不猜,回 null。
+  const v = item.creator || item.author;
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
 function normalizeItem(item) {
   return {
     guid: item.guid || item.id || item.link || null,
     title: item.title || '',
     url: item.link || null,
+    author: pickAuthor(item),
     contentHtml: pickContentHtml(item),
     published_at: toEpoch(item),
   };
