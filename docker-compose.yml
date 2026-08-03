@@ -14,8 +14,13 @@ services:
     env_file: .env
     environment:
       - DB_PATH=/app/data/shinkansen-feed.sqlite
+      # Let's Encrypt 新根 ISRG Root YR(2025-09 簽發)尚未進 Node 內建信任清單,
+      # 來源站換用該憑證鏈時抓取會 TLS 失敗(latepost 事故,2026-08-03 預防性補上)。
+      # Node 信任清單收錄後可移除 env + volume 與 deploy/extra-ca.pem。
+      - NODE_EXTRA_CA_CERTS=/app/extra-ca.pem
     volumes:
       - ./data:/app/data
+      - ./deploy/extra-ca.pem:/app/extra-ca.pem:ro
     # 容器 stdout log 輪替(pino 每請求都寫,不設上限會吃磁碟)
     logging:
       driver: json-file
