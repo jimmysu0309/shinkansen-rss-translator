@@ -45,7 +45,7 @@ export const ENGINES = [
 // OpenCC 簡→繁＋台灣慣用詞(等同 Python OpenCC 的 s2twp config)。
 // 轉換設定寫死 cn→twp:所有簡中 feed 場景都用它,有別的需求再開放選項。
 let openccConvert = null;
-function getOpenccConvert() {
+export function getOpenccConvert() {
   if (!openccConvert) openccConvert = OpenCC.Converter({ from: 'cn', to: 'twp' });
   return openccConvert;
 }

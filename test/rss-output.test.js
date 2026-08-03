@@ -56,6 +56,16 @@ describe('buildFeedXml', () => {
     expect((xml.match(/<author>/g) || []).length).toBe(1);
   });
 
+  it('opencc feed 作者名轉繁;其他引擎保留原名', () => {
+    const entries = [
+      { guid: 'a', translation_status: 'done', author: '少数派编辑部', title_translated: 'A譯', content_translated: '<p>a</p>', published_at: 2 },
+    ];
+    const xmlOcc = buildFeedXml({ feed: { ...feed, engine: 'opencc' }, entries, selfUrl: 'https://afu/rss/1' });
+    expect(xmlOcc).toContain('<name>少數派編輯部</name>');
+    const xmlGem = buildFeedXml({ feed: { ...feed, engine: 'gemini' }, entries, selfUrl: 'https://afu/rss/1' });
+    expect(xmlGem).toContain('<name>少数派编辑部</name>');
+  });
+
   it('空 entries → 合法空 Atom', () => {
     const xml = buildFeedXml({ feed, entries: [], selfUrl: 'https://afu/rss/1' });
     expect(xml).toContain('<feed');

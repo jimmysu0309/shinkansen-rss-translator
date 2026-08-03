@@ -9,6 +9,7 @@
 //   ✗ 不驗:Miniflux 端解析(部署時實測)
 
 import { Feed } from 'feed';
+import { getOpenccConvert } from '../engine.js';
 
 /**
  * @param {object} args
@@ -30,14 +31,18 @@ export function buildFeedXml({ feed, entries, selfUrl }) {
     feedLinks: selfUrl ? { atom: selfUrl } : undefined,
   });
 
+  // 作者欄:LLM 引擎保留原名不翻譯(AI 不該改寫人名);opencc 是零失真字元映射,
+  // 作者名一併轉繁(對齊被取代的 opencc proxy 整份直轉行為)。
+  const convertAuthor = feed.engine === 'opencc' ? getOpenccConvert() : (s) => s;
+
   for (const e of entries) {
     const done = e.translation_status === 'done';
     out.addItem({
       title: (done && e.title_translated) || e.title || '(無標題)',
       id: e.guid,
       link: e.url || feed.source_url,
-      // 作者保留原名不翻譯;沒帶會讓下游(Miniflux → Readwise)整條丟失作者
-      author: e.author ? [{ name: e.author }] : undefined,
+      // 作者沒帶會讓下游(Miniflux → Readwise)整條丟失作者
+      author: e.author ? [{ name: convertAuthor(e.author) }] : undefined,
       content: (done && e.content_translated) || e.content_html || '',
       date: e.published_at ? new Date(e.published_at) : new Date(e.created_at || 0),
     });
