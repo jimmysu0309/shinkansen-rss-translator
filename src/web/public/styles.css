@@ -50,7 +50,7 @@ h3 { margin: 0 0 10px; font-size: 13px; color: var(--accent); }
 
 /* ─── 表單控制項(統一寬度/字階,grid 對齊)─── */
 label { display: block; margin: 0 0 4px; color: var(--fg); font-size: 13px; }
-input[type=text], input[type=number], select, textarea {
+input[type=text], input[type=url], input[type=password], input[type=number], select, textarea {
   display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
   border: 1px solid var(--border); border-radius: var(--radius);
   font: 13px var(--font); background: var(--card); color: var(--fg);
