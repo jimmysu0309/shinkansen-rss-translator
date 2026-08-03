@@ -639,10 +639,13 @@ function logQuery() {
 }
 
 let logPage = 0;
+let logReqSeq = 0; // 連續切過濾時,慢的舊請求晚到會蓋掉新結果 → 只採納最後一次
 async function loadLogs() {
+  const seq = ++logReqSeq;
   const p = new URLSearchParams(logQuery().slice(1));
   p.set('limit', PAGE_SIZE); p.set('offset', logPage * PAGE_SIZE);
   const { logs, total } = await api('GET', '/api/logs?' + p.toString());
+  if (seq !== logReqSeq) return; // 已有更新的請求發出,丟棄本回應
   $('#log-table tbody').innerHTML = logs.length
     ? logs.map(l => `<tr>
         <td class="time">${fmtTime(l.ts)}</td>
