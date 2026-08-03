@@ -8,6 +8,11 @@ services:
     image: shinkansen-rss-translator
     container_name: shinkansen-rss
     restart: unless-stopped
+    # 公用 DNS:afu(Windows Docker)容器內解析不穩的既有修正,2026-08-03 從 afu
+    # 本地修改收編進 repo(全 stack 各 compose 同款),消除組態飄移
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     # 只綁 127.0.0.1(對外靠 Tailscale Serve,不直接暴露)
     ports:
       - "127.0.0.1:${WEB_PORT:-8448}:8088"
