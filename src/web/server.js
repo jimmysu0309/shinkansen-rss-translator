@@ -203,7 +203,7 @@ export function buildServer(ctx, opts = {}) {
 
   // ─── 完整備份(設定 + feeds)───
   // 只備份使用者設定欄位,不含抓取狀態(etag / last_* / id)與 apiKey。
-  const FEED_BACKUP_FIELDS = ['source_url', 'title', 'category', 'enabled', 'engine', 'model',
+  const FEED_BACKUP_FIELDS = ['source_url', 'title', 'enabled', 'engine', 'model',
     'service_tier', 'fetch_article', 'target_language', 'system_prompt'];
 
   app.get('/api/backup/export', async (req, reply) => {
@@ -320,7 +320,7 @@ export function buildServer(ctx, opts = {}) {
     for (const e of entries) {
       if (!e.source_url || !isHttpUrl(e.source_url)) { skipped++; continue; } // 缺網址或非 http(s)
       if (ctx.feeds.getByUrl(e.source_url)) { skipped++; continue; } // 已存在
-      ctx.feeds.create({ source_url: e.source_url, title: e.title, category: e.category });
+      ctx.feeds.create({ source_url: e.source_url, title: e.title });
       added++;
     }
     ctx.logs.append({ level: 'info', category: 'opml', message: `匯入 OPML:新增 ${added}、略過 ${skipped}(共 ${entries.length})` });

@@ -10,18 +10,18 @@ import { feedsToOpml, parseOpml } from '../src/pipeline/opml.js';
 
 describe('feedsToOpml', () => {
   const feeds = [
-    { id: 1, title: 'Tech Blog', source_url: 'https://ex.com/feed', category: '科技' },
+    { id: 1, title: 'Tech Blog', source_url: 'https://ex.com/feed' },
     { id: 2, title: 'A & B <news>', source_url: 'https://ab.com/rss' },
   ];
   const rssUrlOf = (f) => `https://afu/rss/${f.id}`;
 
-  it('產生合法 OPML,每個 feed 一個 outline', () => {
+  it('產生合法 OPML,每個 feed 一個 outline;不輸出 category(分類交給 Miniflux)', () => {
     const xml = feedsToOpml(feeds, rssUrlOf);
     expect(xml).toContain('<opml version="2.0">');
     expect((xml.match(/<outline /g) || []).length).toBe(2);
     expect(xml).toContain('xmlUrl="https://afu/rss/1"');
     expect(xml).toContain('htmlUrl="https://ex.com/feed"');
-    expect(xml).toContain('category="科技"');
+    expect(xml).not.toContain('category=');
   });
 
   it('特殊字元跳脫(& < >)', () => {

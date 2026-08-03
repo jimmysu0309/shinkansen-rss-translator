@@ -35,6 +35,11 @@ function migrate(db) {
   if (!entryCols.has('author')) {
     db.exec('ALTER TABLE entries ADD COLUMN author TEXT');
   }
+  // 分類功能已移除(分類交給 Miniflux 匯入時處理)—— 既有 DB 把欄位連值一起刪
+  const feedCols = new Set(db.pragma('table_info(feeds)').map((c) => c.name));
+  if (feedCols.has('category')) {
+    db.exec('ALTER TABLE feeds DROP COLUMN category');
+  }
 }
 
 // ─── settings:JSON kv ───────────────────────────────────────
@@ -69,9 +74,9 @@ function makeSettingsDao(db) {
 // ─── feeds ──────────────────────────────────────────────────
 function makeFeedsDao(db) {
   const insert = db.prepare(`
-    INSERT INTO feeds (source_url, title, category, enabled, engine, model, service_tier,
+    INSERT INTO feeds (source_url, title, enabled, engine, model, service_tier,
                        fetch_article, target_language, system_prompt, created_at)
-    VALUES (@source_url, @title, @category, @enabled, @engine, @model, @service_tier,
+    VALUES (@source_url, @title, @enabled, @engine, @model, @service_tier,
             @fetch_article, @target_language, @system_prompt, @created_at)
   `);
   const byId = db.prepare('SELECT * FROM feeds WHERE id = ?');
@@ -85,7 +90,7 @@ function makeFeedsDao(db) {
     WHERE id = @id
   `);
 
-  const FIELDS = ['title', 'category', 'enabled', 'engine', 'model', 'service_tier',
+  const FIELDS = ['title', 'enabled', 'engine', 'model', 'service_tier',
     'fetch_article', 'target_language', 'system_prompt'];
 
   return {
@@ -94,7 +99,6 @@ function makeFeedsDao(db) {
       const row = {
         source_url: feed.source_url,
         title: feed.title ?? null,
-        category: feed.category ?? null,
         enabled: feed.enabled === undefined ? 1 : (feed.enabled ? 1 : 0),
         engine: feed.engine ?? 'gemini',
         model: feed.model ?? null,
@@ -356,7 +360,7 @@ function makeLogsDao(db) {
     },
     /** 查詢:可依 level / category 過濾,新到舊,支援分頁 */
     query({ from = 0, to = Number.MAX_SAFE_INTEGER, level = null, category = null, limit = 50, offset = 0 } = {}) {
-      // 加 l. 前綴:feeds 表也有 category 欄,JOIN 後不加會 ambiguous
+      // 加 l. 前綴:JOIN feeds 後欄位可能撞名,一律鎖定 logs 表
       const where = ['l.ts >= @from', 'l.ts < @to'];
       const params = { from, to, limit, offset };
       if (level) { where.push('l.level = @level'); params.level = level; }

@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS feeds (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   source_url         TEXT NOT NULL UNIQUE,
   title              TEXT,
-  category           TEXT,
   enabled            INTEGER NOT NULL DEFAULT 1,
   engine             TEXT NOT NULL DEFAULT 'gemini',   -- gemini | openai | google
   model              TEXT,                             -- null = 用全域預設

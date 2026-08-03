@@ -242,14 +242,12 @@ async function loadFeeds() {
         <span>引擎:${engineLabel(f.engine)}</span>
         ${f.engine !== 'google' ? `<span>模型:${f.model ? esc(f.model) : '繼承全域'}</span>` : ''}
         ${f.fetch_article ? '<span>全文抓取</span>' : ''}
-        ${f.category ? `<span>分類:${esc(f.category)}</span>` : ''}
         ${f.last_error ? `<span class="badge error">抓取錯誤</span>` : ''}
       </div>
 
       <div class="feed-edit" hidden>
         <div class="grid2">
           <label>標題<input type="text" data-f="title" value="${esc(f.title || '')}"></label>
-          <label>分類<input type="text" data-f="category" value="${esc(f.category || '')}"></label>
           <label>引擎<select data-f="engine">${DEFAULTS.engines.map(o => `<option value="${esc(o.id)}"${o.id === (f.engine || 'gemini') ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>
           <label>Gemini 模型<select data-f="model">${optionsHtml(DEFAULTS.models, f.model)}</select></label>
         </div>
@@ -310,7 +308,6 @@ $('#feed-list').addEventListener('click', async (e) => {
       const val = (sel) => $(`[data-f="${sel}"]`, box);
       const patch = {
         title: val('title').value.trim() || null,
-        category: val('category').value.trim() || null,
         engine: val('engine').value,          // engine 一律具體值(NOT NULL)
         model: val('model').value || null,    // model 可為 null = 繼承全域
         fetch_article: val('fetch_article').checked,
@@ -382,7 +379,6 @@ $('#add-feed').addEventListener('submit', async (e) => {
     await api('POST', '/api/feeds', {
       source_url: fd.get('source_url').trim(),
       title: fd.get('title').trim() || null,
-      category: fd.get('category').trim() || null,
       engine: fd.get('engine') || null,
       model: fd.get('model') || null,
       fetch_article: fd.get('fetch_article') === 'on',

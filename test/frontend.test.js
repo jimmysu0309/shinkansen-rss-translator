@@ -27,7 +27,7 @@ const DEFAULTS = {
   modelPricing: { 'gemini-3.1-flash-lite': { inputPerMTok: 0.25, outputPerMTok: 1.5 } }, hasApiKey: true,
 };
 // counts 由伺服器列表附上(前端不再逐 feed 撈詳情)
-const FEEDS = [{ id: 1, title: 'take.surf', source_url: 'https://take.surf/feed.atom', engine: 'gemini', model: 'gemini-3.1-flash-lite', enabled: 1, fetch_article: 0, category: '已翻譯', counts: { done: 1, pending: 0, error: 0 } }];
+const FEEDS = [{ id: 1, title: 'take.surf', source_url: 'https://take.surf/feed.atom', engine: 'gemini', model: 'gemini-3.1-flash-lite', enabled: 1, fetch_article: 0, counts: { done: 1, pending: 0, error: 0 } }];
 
 const USAGE = {
   total: { cost: 0.07, calls: 25, input_tokens: 400, output_tokens: 130, cached_tokens: 0, cacheHitRate: 0 },

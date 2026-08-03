@@ -8,7 +8,7 @@
 //   ✓ usage 記錄與統計加總
 //   ✗ 不驗:真實檔案持久化(WAL/併發);那在部署階段驗
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -275,6 +275,28 @@ describe('logs DAO', () => {
     const all = ctx.logs.query();
     expect(all).toHaveLength(2);
     expect(all[0].message).toBe('翻譯失敗 B'); // 新到舊
+  });
+
+  it('遷移:舊 DB 的 feeds.category 欄位被刪除(分類功能移除)', () => {
+    // 模擬 v1.3 以前的 DB:自建含 category 欄的 feeds 表,再走 createDb 的 migrate
+    const tmp = join(mkdtempSync(join(tmpdir(), 'sf-migrate-')), 'old.sqlite');
+    const raw = new Database(tmp);
+    raw.exec(`CREATE TABLE feeds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, source_url TEXT NOT NULL UNIQUE, title TEXT,
+      category TEXT, enabled INTEGER NOT NULL DEFAULT 1, engine TEXT NOT NULL DEFAULT 'gemini',
+      model TEXT, service_tier TEXT, fetch_article INTEGER NOT NULL DEFAULT 0,
+      target_language TEXT, system_prompt TEXT, etag TEXT, last_modified TEXT,
+      last_checked_at INTEGER, last_error TEXT, created_at INTEGER NOT NULL)`);
+    raw.prepare("INSERT INTO feeds (source_url, title, category, created_at) VALUES (?, ?, ?, 0)")
+      .run('https://old.com/feed', '舊feed', '科技');
+    raw.close();
+
+    const migrated = createDb(tmp);
+    const cols = migrated.db.pragma('table_info(feeds)').map((c) => c.name);
+    expect(cols).not.toContain('category');
+    expect(migrated.feeds.getByUrl('https://old.com/feed').title).toBe('舊feed'); // 其他資料保留
+    migrated.db.close();
+    rmSync(tmp, { force: true });
   });
 
   it('依 level / category 過濾', () => {

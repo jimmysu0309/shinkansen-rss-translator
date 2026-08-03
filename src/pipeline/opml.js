@@ -26,8 +26,7 @@ export function feedsToOpml(feeds, rssUrlOf) {
     const title = xmlEscape(f.title || f.source_url);
     const xmlUrl = xmlEscape(rssUrlOf(f));
     const htmlUrl = xmlEscape(f.source_url);
-    const cat = f.category ? ` category="${xmlEscape(f.category)}"` : '';
-    return `    <outline type="rss" text="${title}" title="${title}" xmlUrl="${xmlUrl}" htmlUrl="${htmlUrl}"${cat}/>`;
+    return `    <outline type="rss" text="${title}" title="${title}" xmlUrl="${xmlUrl}" htmlUrl="${htmlUrl}"/>`;
   }).join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -42,10 +41,10 @@ ${outlines}
 }
 
 /**
- * 解析 OPML 字串 → [{ source_url, title, category }]。
+ * 解析 OPML 字串 → [{ source_url, title }]。分類(category 屬性)不收:分類交給 Miniflux 匯入時處理。
  * 用 regex 直接抽 outline 標籤(對自閉合 / 巢狀 / 屬性順序都穩,避開 HTML 解析器對自訂標籤的怪癖)。
  * @param {string} opmlText
- * @returns {Array<{source_url:string, title:string|null, category:string|null}>}
+ * @returns {Array<{source_url:string, title:string|null}>}
  */
 export function parseOpml(opmlText) {
   const out = [];
@@ -58,7 +57,6 @@ export function parseOpml(opmlText) {
     out.push({
       source_url: xmlUnescape(url.trim()),
       title: xmlUnescape(attrs.title || attrs.text || '') || null,
-      category: xmlUnescape(attrs.category || '') || null,
     });
   }
   return out;
