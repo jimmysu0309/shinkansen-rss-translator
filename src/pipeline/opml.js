@@ -41,10 +41,12 @@ ${outlines}
 }
 
 /**
- * 解析 OPML 字串 → [{ source_url, title }]。分類(category 屬性)不收:分類交給 Miniflux 匯入時處理。
+ * 解析 OPML 字串 → [{ source_url, title, html_url }]。分類(category 屬性)不收:分類交給 Miniflux 匯入時處理。
+ * html_url:outline 的 htmlUrl(與 source_url 不同時才附)—— 匯入端用它偵測「自家匯出檔再匯回」
+ * 的自我參照(xmlUrl 是本服務的譯後網址)時退回原始來源。
  * 用 regex 直接抽 outline 標籤(對自閉合 / 巢狀 / 屬性順序都穩,避開 HTML 解析器對自訂標籤的怪癖)。
  * @param {string} opmlText
- * @returns {Array<{source_url:string, title:string|null}>}
+ * @returns {Array<{source_url:string, title:string|null, html_url:string|null}>}
  */
 export function parseOpml(opmlText) {
   const out = [];
@@ -54,9 +56,12 @@ export function parseOpml(opmlText) {
     const attrs = parseAttrs(m[1]);
     const url = attrs.xmlurl || attrs.htmlurl;
     if (!url) continue; // 資料夾型 outline(只有 text、無 url)→ 跳過
+    const source_url = xmlUnescape(url.trim());
+    const html_url = attrs.htmlurl ? xmlUnescape(attrs.htmlurl.trim()) : null;
     out.push({
-      source_url: xmlUnescape(url.trim()),
+      source_url,
       title: xmlUnescape(attrs.title || attrs.text || '') || null,
+      html_url: html_url && html_url !== source_url ? html_url : null,
     });
   }
   return out;

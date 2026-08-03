@@ -7,7 +7,7 @@
 //   ✗ 不驗:真實網路抓取(部署驗)
 import { describe, it, expect, beforeEach } from 'vitest';
 import { parseFeedXml, fetchFeed } from '../src/pipeline/fetch-feed.js';
-import { processFeed, processAllFeeds, pruneLogs } from '../src/pipeline/run.js';
+import { processFeed, processAllFeeds, pruneLogs, getLastRun } from '../src/pipeline/run.js';
 import { translateEntry } from '../src/pipeline/translate-entry.js';
 import { createDb } from '../src/db/index.js';
 
@@ -445,4 +445,76 @@ describe('translateEntry 整合(需 GEMINI_API_KEY)', () => {
     expect(r.contentTranslated).toContain('href="https://ex.com"');
     expect(r.hadMismatch).toBe(false);
   }, 45_000);
+});
+
+// ─── 標題回填 / last_run(離線)───
+describe('processFeed:標題回填與 last_run', () => {
+  const fixedNow = () => 1000;
+  const fakeTranslate = async ({ title, contentHtml }) => ({
+    titleTranslated: title, contentTranslated: contentHtml,
+    usage: { inputTokens: 1, outputTokens: 1, cachedTokens: 0 }, hadMismatch: false,
+  });
+  const makeFetch = (items, extra = {}) => async () => ({
+    notModified: false, title: '來源標題', items, etag: null, lastModified: null, ...extra,
+  });
+  let ctx;
+  beforeEach(() => { ctx = createDb(':memory:'); });
+
+  it('feed 沒填標題 → 首次抓取回填來源標題;已有標題不覆蓋', async () => {
+    const noTitle = ctx.feeds.create({ source_url: 'https://ex.com/a' });
+    const hasTitle = ctx.feeds.create({ source_url: 'https://ex.com/b', title: '我取的名字' });
+    const deps = { apiKey: 'x', now: fixedNow, fetchFeed: makeFetch([]), translateEntry: fakeTranslate };
+    await processFeed(ctx, noTitle, deps);
+    await processFeed(ctx, hasTitle, deps);
+    expect(ctx.feeds.get(noTitle.id).title).toBe('來源標題');
+    expect(ctx.feeds.get(hasTitle.id).title).toBe('我取的名字');
+  });
+
+  it('getLastRun:成功記結果、失敗記錯誤;沒跑過為 null', async () => {
+    const feed = ctx.feeds.create({ source_url: 'https://ex.com/f' });
+    expect(getLastRun(ctx, feed.id)).toBeNull();
+    const items = [{ guid: 'g1', title: 'A', contentHtml: '<p>x</p>', published_at: 1 }];
+    await processFeed(ctx, feed, { apiKey: 'x', now: fixedNow, fetchFeed: makeFetch(items), translateEntry: fakeTranslate });
+    expect(getLastRun(ctx, feed.id)).toMatchObject({ finishedAt: 1000, added: 1, translated: 1, failed: 0 });
+
+    await expect(processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, translateEntry: fakeTranslate,
+      fetchFeed: async () => { throw new Error('炸了'); },
+    })).rejects.toThrow('炸了');
+    expect(getLastRun(ctx, feed.id)).toMatchObject({ error: '炸了' });
+  });
+});
+
+// ─── fetchFeed 回應大小上限(離線)───
+describe('fetchFeed 大小上限', () => {
+  const RSS = '<rss version="2.0"><channel><title>T</title></channel></rss>';
+
+  it('content-length 宣告過大 → 拋錯不下載', async () => {
+    let textCalled = false;
+    const fake = async () => ({
+      status: 200, ok: true,
+      headers: { get: (h) => (h === 'content-length' ? String(20 * 1024 * 1024) : null) },
+      text: async () => { textCalled = true; return RSS; },
+    });
+    await expect(fetchFeed('https://ex.com/f', { fetchImpl: fake })).rejects.toThrow('回應過大');
+    expect(textCalled).toBe(false); // 光看標頭就擋下,沒讀 body
+  });
+
+  it('沒宣告 content-length 但實際內容過大 → 拋錯', async () => {
+    const fake = async () => ({
+      status: 200, ok: true, headers: { get: () => null },
+      text: async () => 'x'.repeat(10 * 1024 * 1024 + 1),
+    });
+    await expect(fetchFeed('https://ex.com/f', { fetchImpl: fake })).rejects.toThrow('回應過大');
+  });
+
+  it('正常大小照常解析', async () => {
+    const fake = async () => ({
+      status: 200, ok: true,
+      headers: { get: (h) => (h === 'content-length' ? String(RSS.length) : null) },
+      text: async () => RSS,
+    });
+    const r = await fetchFeed('https://ex.com/f', { fetchImpl: fake });
+    expect(r.title).toBe('T');
+  });
 });

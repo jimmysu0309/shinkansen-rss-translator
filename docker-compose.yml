@@ -19,6 +19,9 @@ services:
     env_file: .env
     environment:
       - DB_PATH=/app/data/shinkansen-feed.sqlite
+      # 用量「每日」彙總以伺服器本地時區切日;容器預設 UTC 會讓台北早上 8 點前的
+      # 用量被算進前一天,圖表與直覺對不上
+      - TZ=Asia/Taipei
       # Let's Encrypt 新根 ISRG Root YR(2025-09 簽發)尚未進 Node 內建信任清單,
       # 來源站換用該憑證鏈時抓取會 TLS 失敗(latepost 事故,2026-08-03 預防性補上)。
       # Node 信任清單收錄後可移除 env + volume 與 deploy/extra-ca.pem。

@@ -13,6 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { Module } from 'node:module';
 import { parseHTML } from 'linkedom';
+import { APP_VERSION } from '../version.js';
 
 // 以 CommonJS 情境載入 vendor readability.js
 const _readabilityUrl = new URL('../../vendor/shinkansen/shinkansen/lib/readability.js', import.meta.url);
@@ -166,7 +167,7 @@ const MAX_HTML_BYTES = 5 * 1024 * 1024;
 export async function fetchFullText(url, opts = {}) {
   const doFetch = opts.fetchImpl || fetch;
   const resp = await doFetch(url, {
-    headers: { 'user-agent': 'Shinkansen-Feed/0.1 (+full-text)' },
+    headers: { 'user-agent': `Shinkansen-Feed/${APP_VERSION} (+full-text)` },
     signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
   });
   if (!resp.ok) return null;

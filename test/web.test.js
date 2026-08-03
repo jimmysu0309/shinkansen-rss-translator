@@ -243,7 +243,7 @@ describe('feeds API', () => {
 describe('手動刷新', () => {
   it('POST refresh → 抓取 + 翻譯 + 記帳 + 費用', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
-    const r = await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    const r = await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` });
     expect(r.json()).toMatchObject({ added: 1, translated: 1, failed: 0 });
     const usage = (await app.inject({ method: 'GET', url: '/api/usage' })).json();
     expect(usage.total.calls).toBe(1);
@@ -285,7 +285,7 @@ describe('OPML 匯入 / 匯出', () => {
 describe('計價覆蓋影響用量費用', () => {
   it('設了自訂單價後 /api/usage 費用照新價算', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
-    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // fake usage: in50 out10, model gemini-3.1-flash-lite
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` }); // fake usage: in50 out10, model gemini-3.1-flash-lite
     const before = (await app.inject({ method: 'GET', url: '/api/usage' })).json().total.cost;
     // 把 lite 單價拉高 1000 倍
     await app.inject({ method: 'PUT', url: '/api/settings', payload: { modelPricingOverrides: { 'gemini-3.1-flash-lite': { inputPerMTok: 250, outputPerMTok: 1500 } } } });
@@ -309,7 +309,7 @@ describe('測試 feed 網址', () => {
 describe('用量:日彙總 / 快取命中率 / CSV', () => {
   beforeEach(async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
-    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` });
   });
   it('/api/usage 回 daily、cacheHitRate、byFeed(以 feed 為基準)', async () => {
     const u = (await app.inject({ method: 'GET', url: '/api/usage' })).json();
@@ -342,7 +342,7 @@ describe('用量:日彙總 / 快取命中率 / CSV', () => {
 describe('Log API', () => {
   beforeEach(async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
-    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 產生 fetch + translate log
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` }); // 產生 fetch + translate log
   });
 
   it('GET /api/logs?q= 關鍵字過濾訊息,total 同步', async () => {
@@ -415,7 +415,7 @@ describe('Log API', () => {
 describe('清除用量', () => {
   it('DELETE /api/usage 清空用量後統計歸零', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
-    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` });
     expect((await app.inject({ method: 'GET', url: '/api/usage' })).json().total.calls).toBeGreaterThan(0);
     const del = (await app.inject({ method: 'DELETE', url: '/api/usage' })).json();
     expect(del.ok).toBe(true);
@@ -432,21 +432,21 @@ describe('重翻失敗文章', () => {
     // 造一筆 error 條目
     const { entry } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'e1', title: 'Err', content_html: '<p>x</p>' });
     ctx.entries.markError(entry.id, new Error('boom'));
-    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retry-errors` })).json();
+    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retry-errors?wait=1` })).json();
     expect(r.reset).toBe(1);
     expect(ctx.entries.getByGuid(f.id, 'e1').translation_status).toBe('done'); // 被 fake 翻好
   });
   it('沒有 error → reset 0,不動作', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://noerr.com/feed' } })).json();
-    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retry-errors` })).json();
+    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retry-errors?wait=1` })).json();
     expect(r).toMatchObject({ reset: 0, translated: 0 });
   });
 
   it('整 feed 重譯:已翻的也重設 pending 再翻', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/rt' } })).json();
-    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 產生 1 篇 done
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` }); // 產生 1 篇 done
     expect(ctx.entries.listByFeed(f.id)[0].translation_status).toBe('done');
-    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retranslate` })).json();
+    const r = (await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retranslate?wait=1` })).json();
     expect(r.reset).toBe(1);
     expect(r.translated).toBe(1); // 重設後又翻一次
   });
@@ -512,10 +512,10 @@ describe('引擎欄位', () => {
     const app2 = buildServer(ctx2, { processDeps: fakeProcessDeps }); // 不給 apiKey
     const occ = (await app2.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/occ', engine: 'opencc' } })).json();
     expect(occ.engine).toBe('opencc');
-    const rOcc = await app2.inject({ method: 'POST', url: `/api/feeds/${occ.id}/refresh` });
+    const rOcc = await app2.inject({ method: 'POST', url: `/api/feeds/${occ.id}/refresh?wait=1` });
     expect(rOcc.statusCode).toBe(200); // opencc 不需 key
     const gem = (await app2.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/gem', engine: 'gemini' } })).json();
-    const rGem = await app2.inject({ method: 'POST', url: `/api/feeds/${gem.id}/refresh` });
+    const rGem = await app2.inject({ method: 'POST', url: `/api/feeds/${gem.id}/refresh?wait=1` });
     expect(rGem.statusCode).toBe(400); // gemini 缺 key 才擋
   });
 });
@@ -537,7 +537,7 @@ describe('輸出網址含 port(Fastify 5 的 req.hostname 不含 port,必須用 
 describe('feeds 列表附狀態篇數', () => {
   it('GET /api/feeds 每個 feed 帶 counts(涵蓋所有文章,非只列表頁那幾篇)', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();
-    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 1 篇 done
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` }); // 1 篇 done
     const { entry } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'err-1', title: 'E', content_html: '<p>x</p>' });
     ctx.entries.markError(entry.id, new Error('boom'));
     const list = (await app.inject({ method: 'GET', url: '/api/feeds' })).json();
@@ -572,7 +572,7 @@ describe('feed 來源網址驗證', () => {
 describe('CSV 公式注入防護', () => {
   it('= 開頭的標題在 CSV 內補單引號前綴', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', title: '=1+2' } })).json();
-    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` });
     const res = await app.inject({ method: 'GET', url: '/api/usage/export.csv' });
     expect(res.body).toContain("'=1+2");
     expect(res.body).not.toContain(',=1+2'); // 不能有裸公式欄位
@@ -591,11 +591,11 @@ describe('併發保護(同 feed 同時只跑一個)', () => {
     const app2 = buildServer(ctx2, { apiKey: 'k', processDeps: slowDeps });
     const f = (await app2.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://slow.com/feed' } })).json();
 
-    const first = app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 卡在翻譯
+    const first = app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` }); // 卡在翻譯
     await new Promise((r) => setTimeout(r, 20));
-    const second = await app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    const second = await app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` });
     expect(second.statusCode).toBe(409);
-    const retr = await app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/retranslate` });
+    const retr = await app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/retranslate?wait=1` });
     expect(retr.statusCode).toBe(409); // 重譯也要擋(否則 reset 會攪亂進行中的批次)
 
     release();
@@ -676,7 +676,7 @@ describe('認證(Basic Auth,AUTH_PASSWORD)', () => {
 describe('RSS 輸出端點', () => {
   it('GET /rss/:id → Atom,content-type 正確,含譯文', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', title: 'Ex' } })).json();
-    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` });
     const rss = await app.inject({ method: 'GET', url: `/rss/${f.id}` });
     expect(rss.statusCode).toBe(200);
     expect(rss.headers['content-type']).toContain('application/atom+xml');
@@ -687,5 +687,162 @@ describe('RSS 輸出端點', () => {
   it('不存在的 feed → 404', async () => {
     const r = await app.inject({ method: 'GET', url: '/rss/999' });
     expect(r.statusCode).toBe(404);
+  });
+});
+
+describe('全域預設引擎(建立時套用)', () => {
+  it('POST /api/feeds 未指定引擎 → 用全域設定;明示引擎優先', async () => {
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { engine: 'opencc' } });
+    const a = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/a' } })).json();
+    expect(a.engine).toBe('opencc'); // 沒指定 → 全域預設
+    const b = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/b', engine: '' } })).json();
+    expect(b.engine).toBe('opencc'); // 前端「用全域預設」sentinel(空字串)同樣落到全域
+    const c = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/c', engine: 'google' } })).json();
+    expect(c.engine).toBe('google'); // 明示引擎不被蓋掉
+  });
+
+  it('OPML 匯入與備份匯入的新 feed 也套全域預設引擎', async () => {
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { engine: 'google' } });
+    await app.inject({
+      method: 'POST', url: '/api/feeds/import-opml',
+      payload: { opml: '<opml><body><outline text="x" xmlUrl="https://opml.com/feed"/></body></opml>' },
+    });
+    expect(ctx.feeds.getByUrl('https://opml.com/feed').engine).toBe('google');
+    await app.inject({
+      method: 'POST', url: '/api/backup/import',
+      payload: { settings: {}, feeds: [{ source_url: 'https://bk.com/feed', title: 'B' }] },
+    });
+    expect(ctx.feeds.getByUrl('https://bk.com/feed').engine).toBe('google');
+    // 備份檔有帶 engine → 以備份為準
+    await app.inject({
+      method: 'POST', url: '/api/backup/import',
+      payload: { settings: {}, feeds: [{ source_url: 'https://bk2.com/feed', engine: 'opencc' }] },
+    });
+    expect(ctx.feeds.getByUrl('https://bk2.com/feed').engine).toBe('opencc');
+  });
+});
+
+describe('背景刷新(202 + in_flight + last_run)', () => {
+  it('refresh 預設回 202 started;完成後 in_flight false、last_run 有結果、文章翻好', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://bg.com/feed' } })).json();
+    const r = await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` });
+    expect(r.statusCode).toBe(202);
+    expect(r.json()).toEqual({ started: true });
+    // fake deps 幾乎即時完成;輪詢至 in_flight false(上限 1 秒)
+    let row;
+    for (let i = 0; i < 100; i++) {
+      row = (await app.inject({ method: 'GET', url: '/api/feeds' })).json().find((x) => x.id === f.id);
+      if (!row.in_flight) break;
+      await new Promise((res) => setTimeout(res, 10));
+    }
+    expect(row.in_flight).toBe(false);
+    expect(row.last_run).toMatchObject({ added: 1, translated: 1, failed: 0 });
+    expect(row.counts).toMatchObject({ done: 1 });
+  });
+
+  it('背景抓取失敗 → last_run.error 有錯誤訊息(前端輪詢後顯示)', async () => {
+    const ctx2 = createDb(':memory:');
+    const app2 = buildServer(ctx2, {
+      apiKey: 'k',
+      processDeps: { ...fakeProcessDeps, fetchFeed: async () => { throw new Error('來源掛了'); } },
+    });
+    const f = (await app2.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://dead.com/feed' } })).json();
+    expect((await app2.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` })).statusCode).toBe(202);
+    let row;
+    for (let i = 0; i < 100; i++) {
+      row = (await app2.inject({ method: 'GET', url: '/api/feeds' })).json()[0];
+      if (!row.in_flight) break;
+      await new Promise((res) => setTimeout(res, 10));
+    }
+    expect(row.last_run.error).toContain('來源掛了');
+  });
+
+  it('retranslate 背景模式回 202 + reset 數', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://bg2.com/feed' } })).json();
+    await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh?wait=1` }); // 先有 1 篇 done
+    const r = await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/retranslate` });
+    expect(r.statusCode).toBe(202);
+    expect(r.json()).toEqual({ started: true, reset: 1 });
+    // 等背景收尾,避免跨測試殘留 in-flight
+    for (let i = 0; i < 100; i++) {
+      const row = (await app.inject({ method: 'GET', url: '/api/feeds' })).json().find((x) => x.id === f.id);
+      if (!row.in_flight) break;
+      await new Promise((res) => setTimeout(res, 10));
+    }
+  });
+});
+
+describe('OPML 匯入:自家匯出檔防自我參照', () => {
+  it('xmlUrl 指向自家 /rss/N → 改用 htmlUrl(原始來源);沒 htmlUrl 就略過', async () => {
+    const opml = `<opml><body>
+      <outline text="還原得了" xmlUrl="http://myhost:8088/rss/3" htmlUrl="https://orig.com/feed"/>
+      <outline text="還原不了" xmlUrl="http://myhost:8088/rss/4"/>
+      <outline text="外站的 rss 路徑不受影響" xmlUrl="https://other.com/rss/5"/>
+    </body></opml>`;
+    const r = (await app.inject({
+      method: 'POST', url: '/api/feeds/import-opml', headers: { host: 'myhost:8088' }, payload: { opml },
+    })).json();
+    expect(r).toMatchObject({ added: 2, skipped: 1, total: 3 });
+    expect(ctx.feeds.getByUrl('https://orig.com/feed')).toBeTruthy();   // 用 htmlUrl 還原
+    expect(ctx.feeds.getByUrl('http://myhost:8088/rss/3')).toBeFalsy(); // 不收自家輸出
+    expect(ctx.feeds.getByUrl('http://myhost:8088/rss/4')).toBeFalsy();
+    expect(ctx.feeds.getByUrl('https://other.com/rss/5')).toBeTruthy(); // 外站不誤判
+  });
+});
+
+describe('設定值型別清洗', () => {
+  it('數值鍵收到非數字 → 不存;字串數字可收', async () => {
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { maxUnitsPerBatch: 'abc', temperature: '0.5' } });
+    expect(ctx.settings.get('maxUnitsPerBatch')).toBeUndefined();
+    expect(ctx.settings.get('temperature')).toBe(0.5);
+  });
+
+  it('字串鍵收到物件 → 不存;陣列鍵收到字串 → 不存', async () => {
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { systemPrompt: { evil: 1 }, forbiddenTerms: 'not-array' } });
+    expect(ctx.settings.get('systemPrompt')).toBeUndefined();
+    expect(ctx.settings.get('forbiddenTerms')).toBeUndefined();
+  });
+
+  it('modelPricingOverrides:非數字欄位被清掉(XSS 載體不落地),合法數字保留', async () => {
+    await app.inject({
+      method: 'PUT', url: '/api/settings',
+      payload: { modelPricingOverrides: {
+        'gemini-3.1-flash-lite': { inputPerMTok: '"><img src=x onerror=alert(1)>', outputPerMTok: 1.5 },
+        'gemini-3.6-flash': { inputPerMTok: 2, outputPerMTok: 12 },
+      } },
+    });
+    const ov = ctx.settings.get('modelPricingOverrides');
+    expect(ov['gemini-3.1-flash-lite']).toEqual({ outputPerMTok: 1.5 }); // 垃圾欄被剔除
+    expect(ov['gemini-3.6-flash']).toEqual({ inputPerMTok: 2, outputPerMTok: 12 });
+  });
+});
+
+describe('認證:鎖定過期自動解鎖', () => {
+  const basic = (user, pass) => 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+
+  it('鎖定時長過後,正確密碼可登入(過期紀錄清掉,不永久封鎖)', async () => {
+    const a = buildServer(createDb(':memory:'), { authPassword: 'pw', authLockMs: 30 });
+    for (let i = 0; i < 10; i++) {
+      await a.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', 'bad') } });
+    }
+    const locked = await a.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', 'pw') } });
+    expect(locked.statusCode).toBe(429); // 鎖定中,對的密碼也擋
+    await new Promise((r) => setTimeout(r, 50)); // 超過 authLockMs
+    const ok = await a.inject({ method: 'GET', url: '/api/feeds', headers: { authorization: basic('x', 'pw') } });
+    expect(ok.statusCode).toBe(200);
+  });
+});
+
+describe('log CSV 匯出截斷標示', () => {
+  it('筆數超過上限 → 檔尾附截斷說明列(不做 silent cap)', async () => {
+    const ctx2 = createDb(':memory:');
+    const app2 = buildServer(ctx2, { logExportMax: 2 });
+    for (let i = 1; i <= 5; i++) ctx2.logs.append({ ts: i, message: `log-${i}` });
+    const res = await app2.inject({ method: 'GET', url: '/api/logs/export.csv' });
+    expect(res.body).toContain('僅含最新 2 筆');
+    expect(res.body).toContain('共 5 筆');
+    // 沒超過上限就不加說明列
+    const app3 = buildServer(ctx2, { logExportMax: 100 });
+    expect((await app3.inject({ method: 'GET', url: '/api/logs/export.csv' })).body).not.toContain('僅含最新');
   });
 });

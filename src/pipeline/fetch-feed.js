@@ -8,6 +8,11 @@
 //   ✗ 不驗:真實網路(整合/部署階段驗);單元測試用注入的 fetch
 
 import Parser from 'rss-parser';
+import { APP_VERSION } from '../version.js';
+
+// 回應大小上限:壞掉/惡意來源回超大內容不能吃爆記憶體(與 full-text 的 MAX_HTML_BYTES 同款護欄;
+// feed 常帶 content:encoded 全文,上限放寬到 10MB)
+const MAX_XML_BYTES = 10 * 1024 * 1024;
 
 const parser = new Parser({
   // 讓 content:encoded(全文)可取用
@@ -64,7 +69,7 @@ export async function parseFeedXml(xml) {
  */
 export async function fetchFeed(url, opts = {}) {
   const doFetch = opts.fetchImpl || fetch;
-  const headers = { 'user-agent': 'Shinkansen-Feed/0.1 (+RSS translator)' };
+  const headers = { 'user-agent': `Shinkansen-Feed/${APP_VERSION} (+RSS translator)` };
   if (opts.etag) headers['if-none-match'] = opts.etag;
   if (opts.lastModified) headers['if-modified-since'] = opts.lastModified;
 
@@ -76,7 +81,10 @@ export async function fetchFeed(url, opts = {}) {
     }
     if (!resp.ok) throw new Error(`抓取 ${url} 失敗:HTTP ${resp.status}`);
 
+    const declared = Number(resp.headers.get('content-length'));
+    if (declared > MAX_XML_BYTES) throw new Error(`抓取 ${url} 失敗:回應過大(${declared} bytes)`);
     const xml = await resp.text();
+    if (xml.length > MAX_XML_BYTES) throw new Error(`抓取 ${url} 失敗:回應過大(${xml.length} 字元)`); // 沒宣告 content-length 的以實際長度擋
     let parsed;
     try {
       parsed = await parseFeedXml(xml);

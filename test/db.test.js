@@ -220,12 +220,21 @@ describe('entries DAO — 去重是核心', () => {
     expect(ctx.entries.listByFeed(feed2)).toHaveLength(1); // 別的 feed 沒被掃到
   });
 
-  it('pruneByFeed:沒 published_at 的視為最舊先刪;篇數 <= keep 不刪', () => {
-    ctx.entries.upsertNew({ feed_id: feedId, guid: 'no-date', published_at: null });
-    ctx.entries.upsertNew({ feed_id: feedId, guid: 'newer', published_at: 2000 });
+  it('pruneByFeed:沒 published_at 的以 created_at 當新舊依據;篇數 <= keep 不刪', () => {
+    // 防迴圈不變量:剛進庫、來源還在列的無日期文章不能被當「最舊」先砍
+    // (砍了下次抓取會重插 → 重翻 → 再砍,token 無限燒)
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'old-dated', published_at: 1000 }, 1000);
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'new-no-date', published_at: null }, 9000);
     expect(ctx.entries.pruneByFeed(feedId, 1)).toBe(1);
-    expect(ctx.entries.listByFeed(feedId)[0].guid).toBe('newer');
+    expect(ctx.entries.listByFeed(feedId)[0].guid).toBe('new-no-date'); // 新的無日期文章活下來
     expect(ctx.entries.pruneByFeed(feedId, 5)).toBe(0); // 未超額不刪
+  });
+
+  it('listByFeed 排序:無日期文章依 created_at 排,與 pruneByFeed 同一套排序(不變量)', () => {
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'a', published_at: 5000 }, 1000);
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'b', published_at: null }, 8000); // 無日期但最新進庫
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'c', published_at: 2000 }, 1000);
+    expect(ctx.entries.listByFeed(feedId).map((e) => e.guid)).toEqual(['b', 'a', 'c']);
   });
 
   it('statusCountsByFeed:一次 GROUP BY 回各 feed 的狀態篇數', () => {
@@ -260,27 +269,8 @@ describe('usage DAO', () => {
     expect(s.input_tokens).toBe(10);
   });
 
-  it('getByModel 分組', () => {
-    ctx.usage.log({ ts: 1, model: 'lite', usage: { inputTokens: 10, outputTokens: 5 } });
-    ctx.usage.log({ ts: 2, model: 'flash', usage: { inputTokens: 20, outputTokens: 40 } });
-    const rows = ctx.usage.getByModel();
-    expect(rows[0].model).toBe('flash'); // 依 output_tokens 排序
-    expect(rows.find(r => r.model === 'lite').input_tokens).toBe(10);
-  });
-
-  it('getDaily 依日彙總', () => {
-    const day1 = Date.parse('2025-07-01T08:00:00');
-    const day2 = Date.parse('2025-07-02T08:00:00');
-    ctx.usage.log({ ts: day1, model: 'lite', usage: { inputTokens: 10, outputTokens: 5 } });
-    ctx.usage.log({ ts: day1 + 3600_000, model: 'lite', usage: { inputTokens: 20, outputTokens: 5 } });
-    ctx.usage.log({ ts: day2, model: 'lite', usage: { inputTokens: 100, outputTokens: 5 } });
-    const rows = ctx.usage.getDaily();
-    expect(rows.length).toBe(2);
-    expect(rows[0].day).toBe('2025-07-01');
-    expect(rows[0].calls).toBe(2);
-    expect(rows[0].input_tokens).toBe(30);
-    expect(rows[1].day).toBe('2025-07-02');
-  });
+  // 註:逐日 / 逐模型彙總已從 DAO 移除 —— /api/usage 逐列算費用時順路彙總(單一實作),
+  // 逐日行為由 web.test.js 的 /api/usage daily 測試涵蓋。
 
   it('getRaw join feed / entry 標題(供 CSV)', () => {
     const f = ctx.feeds.create({ source_url: 'https://ex.com/feed', title: '來源A' });

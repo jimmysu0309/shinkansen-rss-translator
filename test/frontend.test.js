@@ -294,3 +294,78 @@ describe('前端:設定頁載入', () => {
     expect(read('../src/web/public/index.html')).toContain('rel="icon"');
   });
 });
+
+describe('前端:計價覆蓋值跳脫(存量 XSS 防護)', () => {
+  it('override 值帶 HTML 也只會變成 input 的字面值,不產生元素', async () => {
+    const evil = '"><img src=x onerror=window.__pwned=1>';
+    document.body.innerHTML = bodyHtml;
+    global.fetch = vi.fn((url) => {
+      const u = String(url);
+      if (u.endsWith('/api/settings')) {
+        return Promise.resolve({
+          ok: true, headers: { get: () => 'application/json' },
+          json: () => Promise.resolve({ modelPricingOverrides: { 'gemini-3.1-flash-lite': { inputPerMTok: evil, outputPerMTok: 1 } } }),
+        });
+      }
+      return mockFetch(url);
+    });
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true });
+    new Function(appSrc)();
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(document.querySelector('#pricing-rows img')).toBeNull(); // 沒被當 HTML 執行
+    expect(window.__pwned).toBeUndefined();
+    // type=number 會把非數字的 .value 正規化成空字串;驗屬性本身仍是跳脫後的字面值
+    expect(document.querySelector('#pricing-rows .price-in').getAttribute('value')).toBe(evil);
+  });
+});
+
+describe('前端:已下架模型不默默改值', () => {
+  it('feed 的 model 不在清單 → 編輯下拉補「(已下架)」選項並選中', async () => {
+    const stale = { ...FEEDS[0], model: 'gemini-old-gone' };
+    document.body.innerHTML = bodyHtml;
+    global.fetch = vi.fn((url) => {
+      if (String(url).endsWith('/api/feeds')) {
+        return Promise.resolve({ ok: true, headers: { get: () => 'application/json' }, json: () => Promise.resolve([stale]) });
+      }
+      return mockFetch(url);
+    });
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true });
+    new Function(appSrc)();
+    await new Promise((r) => setTimeout(r, 60));
+
+    const sel = document.querySelector('.feed-item [data-f="model"]');
+    expect(sel.value).toBe('gemini-old-gone'); // 不落回「繼承全域」
+    expect([...sel.options].find((o) => o.value === 'gemini-old-gone').textContent).toContain('已下架');
+  });
+});
+
+describe('前端:背景刷新輪詢', () => {
+  it('刷新回 202 → 輪詢 /api/feeds 至 in_flight false → 以 last_run 顯示結果', async () => {
+    await boot();
+    // 刷新後的列表:feed 1 已完成,帶 last_run
+    const doneRow = { ...FEEDS[0], in_flight: false, last_run: { finishedAt: 1, added: 2, translated: 2, failed: 0 } };
+    let refreshed = false;
+    const base = global.fetch.getMockImplementation();
+    global.fetch = vi.fn((url, init) => {
+      const u = String(url);
+      if (u.endsWith('/api/feeds/1/refresh') && init?.method === 'POST') {
+        refreshed = true;
+        return Promise.resolve({ ok: true, status: 202, headers: { get: () => 'application/json' }, json: () => Promise.resolve({ started: true }) });
+      }
+      if (refreshed && u.endsWith('/api/feeds')) {
+        return Promise.resolve({ ok: true, headers: { get: () => 'application/json' }, json: () => Promise.resolve([doneRow, FEEDS[1]]) });
+      }
+      return base(url, init);
+    });
+
+    const card = document.querySelector('#feed-list .feed-item[data-id="1"]');
+    card.querySelector('[data-act="refresh"]').click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(refreshed).toBe(true); // POST 已發
+    // 輪詢間隔 2s → 等第一輪 poll 完成
+    await new Promise((r) => setTimeout(r, 2300));
+    expect(document.querySelector('#toast').textContent).toContain('新增 2 篇');
+    expect(document.querySelector('#toast').textContent).toContain('翻譯 2 篇');
+  }, 8000);
+});

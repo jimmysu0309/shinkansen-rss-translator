@@ -49,10 +49,22 @@ function fillModelSelect(sel, includeInherit) {
   DEFAULTS.models.forEach(m => sel.add(new Option(m.label, m.id)));
 }
 
-function fillEngineSelect(sel, includeInherit) {
+// 引擎下拉。emptyLabel:新增表單的空值選項文字 —— 語意是「建立時套用全域預設」
+// (feeds.engine 存具體值,建立後改全域不影響),不叫「繼承」以免誤解成持續連動。
+function fillEngineSelect(sel, emptyLabel) {
   sel.innerHTML = '';
-  if (includeInherit) sel.add(new Option('繼承全域預設', ''));
+  if (emptyLabel) sel.add(new Option(emptyLabel, ''));
   DEFAULTS.engines.forEach(e => sel.add(new Option(e.label, e.id)));
+}
+
+// select 設值防呆:目標值不在選項裡(如已下架的模型)→ 補一個標註選項,
+// 不能默默落到第一個選項,否則使用者一存就把 feed 的模型改掉了
+function selectValue(sel, value, staleSuffix = '（已下架）') {
+  sel.value = value;
+  if (sel.value !== value && value) {
+    sel.add(new Option(`${value}${staleSuffix}`, value));
+    sel.value = value;
+  }
 }
 
 // 模型計價列(照 Shinkansen options:每個內建計價的模型一列,input/output 覆蓋,placeholder = 內建價)
@@ -75,10 +87,10 @@ function renderPricingRows(overrides) {
         <span class="builtin">內建 $${built.inputPerMTok ?? '—'} / $${built.outputPerMTok ?? '—'}</span>
       </div>
       <label class="price-field"><span>輸入 /1M</span>
-        <input type="number" step="0.01" min="0" class="price-in" placeholder="${built.inputPerMTok ?? ''}" value="${ov.inputPerMTok ?? ''}">
+        <input type="number" step="0.01" min="0" class="price-in" placeholder="${esc(built.inputPerMTok ?? '')}" value="${esc(ov.inputPerMTok ?? '')}">
       </label>
       <label class="price-field"><span>輸出 /1M</span>
-        <input type="number" step="0.01" min="0" class="price-out" placeholder="${built.outputPerMTok ?? ''}" value="${ov.outputPerMTok ?? ''}">
+        <input type="number" step="0.01" min="0" class="price-out" placeholder="${esc(built.outputPerMTok ?? '')}" value="${esc(ov.outputPerMTok ?? '')}">
       </label>
     </div>`;
   }).join('');
@@ -110,10 +122,10 @@ async function loadSettings() {
   updateApiKeyPill(DEFAULTS.hasApiKey);
   $('#s-apikey').value = ''; // 永遠留空;有值才代表要變更
 
-  fillEngineSelect($('#s-engine'), false);
+  fillEngineSelect($('#s-engine'));
   $('#s-engine').value = s.engine || 'gemini';
   fillModelSelect($('#s-model'), false);
-  $('#s-model').value = s.model || DEFAULTS.model;
+  selectValue($('#s-model'), s.model || DEFAULTS.model); // 已下架模型補標註選項,不默默改值
   $('#s-units').value = s.maxUnitsPerBatch ?? DEFAULTS.maxUnitsPerBatch;
   $('#s-chars').value = s.maxCharsPerBatch ?? DEFAULTS.maxCharsPerBatch;
   $('#s-temp').value = s.temperature ?? DEFAULTS.temperature;
@@ -128,8 +140,8 @@ async function loadSettings() {
   initLogFilters();
   $('#s-forbidden').value = termsToText(s.forbiddenTerms ?? DEFAULTS.forbiddenTerms);
 
-  // 新增 feed 表單的引擎/模型下拉(含「繼承全域」sentinel)
-  fillEngineSelect($('#add-feed select[name=engine]'), true);
+  // 新增 feed 表單的引擎/模型下拉(空值 = 建立時套用全域預設)
+  fillEngineSelect($('#add-feed select[name=engine]'), '用全域預設');
   fillModelSelect($('#add-feed select[name=model]'), true);
 }
 
@@ -202,17 +214,51 @@ function statusBadges(counts) {
   return parts.join('') || '<span class="badge">尚無文章</span>';
 }
 
-// 產生 <option> 字串(含「繼承全域」sentinel),selected 標在目前值
+// 產生 <option> 字串(含「繼承全域」sentinel),selected 標在目前值。
+// 目前值不在清單裡(已下架模型)→ 補標註選項,避免顯示成「繼承全域」、一存就默默改值
 function optionsHtml(items, selected) {
   const inherit = `<option value=""${!selected ? ' selected' : ''}>繼承全域預設</option>`;
-  return inherit + items.map(o => {
+  let found = !selected;
+  const opts = items.map(o => {
     const val = o.id ?? o;
     const label = o.label ?? o;
+    if (val === selected) found = true;
     return `<option value="${esc(val)}"${val === selected ? ' selected' : ''}>${esc(label)}</option>`;
   }).join('');
+  const stale = found ? '' : `<option value="${esc(selected)}" selected>${esc(selected)}（已下架）</option>`;
+  return inherit + opts + stale;
+}
+
+// 等背景處理完成:輪詢 /api/feeds 直到該 feed 的 in_flight 為 false,回傳最終 feed 物件
+// (含 last_run 結果)。上限 ~30 分鐘,超過回 null(呼叫端顯示通用訊息)。
+async function waitFeedDone(id) {
+  for (let i = 0; i < 900; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const feeds = await api('GET', '/api/feeds');
+    const f = feeds.find(x => String(x.id) === String(id));
+    if (!f || !f.in_flight) return f || null;
+  }
+  return null;
+}
+
+// last_run → toast 文字(refresh / retry / retranslate 完成訊息共用)
+function lastRunToast(lr, prefix) {
+  if (!lr) return `${prefix}完成`;
+  if (lr.error) return `${prefix}失敗:${lr.error}`;
+  const parts = [];
+  if (lr.added !== undefined) parts.push(`新增 ${lr.added} 篇`);
+  parts.push(`翻譯 ${lr.translated} 篇`);
+  if (lr.failed) parts.push(`失敗 ${lr.failed}`);
+  return `${prefix}:${parts.join('、')}`;
 }
 
 async function loadFeeds() {
+  try {
+    await loadFeedsInner();
+  } catch (e) { toast('載入 feeds 失敗:' + e.message); }
+}
+
+async function loadFeedsInner() {
   const feeds = await api('GET', '/api/feeds'); // 列表已附各狀態篇數(counts),免逐 feed 撈詳情
   const list = $('#feed-list');
   if (!feeds.length) { list.innerHTML = '<p class="hint">還沒有 feed。用上方表單新增第一個。</p>'; return; }
@@ -283,8 +329,9 @@ $('#feed-list').addEventListener('click', async (e) => {
       toast('已複製 RSS 網址');
     } else if (act === 'refresh') {
       btn.textContent = '刷新中…'; btn.disabled = true;
-      const r = await api('POST', `/api/feeds/${id}/refresh`);
-      toast(`新增 ${r.added} 篇、翻譯 ${r.translated} 篇${r.failed ? `、失敗 ${r.failed}` : ''}`);
+      await api('POST', `/api/feeds/${id}/refresh`); // 202:背景執行,輪詢等完成
+      const f = await waitFeedDone(id);
+      toast(lastRunToast(f?.last_run, '刷新'));
       loadFeeds();
     } else if (act === 'errors') {
       const box = $('.feed-errors', item);
@@ -313,13 +360,16 @@ $('#feed-list').addEventListener('click', async (e) => {
     } else if (act === 'retry') {
       btn.textContent = '重翻中…'; btn.disabled = true;
       const r = await api('POST', `/api/feeds/${id}/retry-errors`);
-      toast(`重翻 ${r.reset} 篇:成功 ${r.translated}、失敗 ${r.failed}`);
+      if (!r.started) { toast('沒有失敗的文章'); loadFeeds(); return; } // reset 0:同步回應
+      const f = await waitFeedDone(id);
+      toast(lastRunToast(f?.last_run, `重翻 ${r.reset} 篇`));
       loadFeeds();
     } else if (act === 'retranslate') {
       if (!confirm('把這個 feed 的所有文章(含已翻)全部重翻一次?\n會重新花費 token（Gemini 引擎）。')) return;
       btn.textContent = '重譯中…'; btn.disabled = true;
       const r = await api('POST', `/api/feeds/${id}/retranslate`);
-      toast(`全部重譯 ${r.reset} 篇:成功 ${r.translated}、失敗 ${r.failed}`);
+      const f = await waitFeedDone(id);
+      toast(lastRunToast(f?.last_run, `全部重譯 ${r.reset} 篇`));
       loadFeeds();
     } else if (act === 'delete') {
       if (!confirm('確定刪除這個 feed 及其所有文章?')) return;
@@ -412,7 +462,7 @@ $('#add-feed').addEventListener('submit', async (e) => {
       fetch_article: fd.get('fetch_article') === 'on',
     });
     e.target.reset();
-    fillEngineSelect($('#add-feed select[name=engine]'), true);
+    fillEngineSelect($('#add-feed select[name=engine]'), '用全域預設');
     fillModelSelect($('#add-feed select[name=model]'), true);
     toast('已新增 feed'); loadFeeds();
   } catch (err) { toast('新增失敗:' + err.message); }
@@ -428,6 +478,12 @@ function rangeParams() {
 }
 
 async function loadUsage() {
+  try {
+    await loadUsageInner();
+  } catch (e) { toast('載入用量失敗:' + e.message); }
+}
+
+async function loadUsageInner() {
   const u = await api('GET', '/api/usage' + rangeParams());
   $('#u-cost').textContent = fmtUsd(u.total.cost);
   $('#u-calls').textContent = fmt(u.total.calls);
@@ -494,6 +550,12 @@ function renderPager(sel, page, total) {
 // 用量明細(分頁,每頁 50)
 let recPage = 0;
 async function loadRecords() {
+  try {
+    await loadRecordsInner();
+  } catch (e) { toast('載入明細失敗:' + e.message); }
+}
+
+async function loadRecordsInner() {
   const p = new URLSearchParams();
   if (usageDays) p.set('from', Date.now() - usageDays * 86400_000);
   p.set('limit', PAGE_SIZE); p.set('offset', recPage * PAGE_SIZE);
@@ -641,6 +703,12 @@ function logQuery() {
 let logPage = 0;
 let logReqSeq = 0; // 連續切過濾時,慢的舊請求晚到會蓋掉新結果 → 只採納最後一次
 async function loadLogs() {
+  try {
+    await loadLogsInner();
+  } catch (e) { toast('載入紀錄失敗:' + e.message); }
+}
+
+async function loadLogsInner() {
   const seq = ++logReqSeq;
   const p = new URLSearchParams(logQuery().slice(1));
   p.set('limit', PAGE_SIZE); p.set('offset', logPage * PAGE_SIZE);

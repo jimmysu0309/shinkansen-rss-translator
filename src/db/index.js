@@ -162,7 +162,10 @@ function makeEntriesDao(db) {
   `);
   const byId = db.prepare('SELECT * FROM entries WHERE id = ?');
   const byGuid = db.prepare('SELECT * FROM entries WHERE feed_id = ? AND guid = ?');
-  const listByFeed = db.prepare('SELECT * FROM entries WHERE feed_id = ? ORDER BY published_at DESC, id DESC LIMIT ?');
+  // 排序鍵 COALESCE(published_at, created_at):沒發佈日期的文章以進庫時間當新舊依據。
+  // 不能用裸 published_at —— SQLite DESC 把 NULL 排最後,沒日期的文章會被 prune 當「最舊」
+  // 先砍,若它還在來源 XML 上就會重插→重翻→再砍,token 無限燒(prune 防迴圈保護被繞過)。
+  const listByFeed = db.prepare('SELECT * FROM entries WHERE feed_id = ? ORDER BY COALESCE(published_at, created_at) DESC, id DESC LIMIT ?');
   const pendingByFeed = db.prepare("SELECT * FROM entries WHERE feed_id = ? AND translation_status = 'pending' ORDER BY id");
   const countPending = db.prepare("SELECT COUNT(*) n FROM entries WHERE translation_status = 'pending'");
   const statusCounts = db.prepare(
@@ -178,11 +181,11 @@ function makeEntriesDao(db) {
     UPDATE entries SET translation_status = 'error', translation_error = @err WHERE id = @id
   `);
   const delByFeed = db.prepare('DELETE FROM entries WHERE feed_id = ?');
-  // 保留最新 keep 篇(排序同 listByFeed),其餘刪除 —— 防 entries 無限成長
+  // 保留最新 keep 篇(排序必須同 listByFeed,見上方 COALESCE 註記),其餘刪除 —— 防 entries 無限成長
   const pruneOld = db.prepare(`
     DELETE FROM entries WHERE feed_id = @feed_id AND id NOT IN (
       SELECT id FROM entries WHERE feed_id = @feed_id
-      ORDER BY published_at DESC, id DESC LIMIT @keep
+      ORDER BY COALESCE(published_at, created_at) DESC, id DESC LIMIT @keep
     )
   `);
 
@@ -286,23 +289,8 @@ function makeUsageDao(db) {
            COALESCE(SUM(cached_tokens),0) cached_tokens
     FROM usage WHERE ts >= @from AND ts < @to
   `);
-  const byModel = db.prepare(`
-    SELECT model,
-           COUNT(*) calls,
-           COALESCE(SUM(input_tokens),0)  input_tokens,
-           COALESCE(SUM(output_tokens),0) output_tokens,
-           COALESCE(SUM(cached_tokens),0) cached_tokens
-    FROM usage WHERE ts >= @from AND ts < @to GROUP BY model ORDER BY output_tokens DESC
-  `);
-  // 逐日彙總(用本地時區切日)
-  const daily = db.prepare(`
-    SELECT date(ts/1000, 'unixepoch', 'localtime') AS day,
-           COUNT(*) calls,
-           COALESCE(SUM(input_tokens),0)  input_tokens,
-           COALESCE(SUM(output_tokens),0) output_tokens,
-           COALESCE(SUM(cached_tokens),0) cached_tokens
-    FROM usage WHERE ts >= @from AND ts < @to GROUP BY day ORDER BY day
-  `);
+  // 註:逐日 / 逐模型彙總不在 DAO 做 —— /api/usage 需要逐列算費用(計價覆蓋),
+  // 只能掃 getRaw 邊掃邊彙總;DAO 再留一套 GROUP BY 版本就是同一份事實雙實作,必 drift。
   // CSV 用:原始列 join feed 標題 / entry 標題
   const rawRows = db.prepare(`
     SELECT u.ts, u.feed_id, u.model, u.input_tokens, u.output_tokens, u.cached_tokens,
@@ -337,12 +325,6 @@ function makeUsageDao(db) {
     },
     getStats({ from = 0, to = Number.MAX_SAFE_INTEGER } = {}) {
       return statsRange.get({ from, to });
-    },
-    getByModel({ from = 0, to = Number.MAX_SAFE_INTEGER } = {}) {
-      return byModel.all({ from, to });
-    },
-    getDaily({ from = 0, to = Number.MAX_SAFE_INTEGER } = {}) {
-      return daily.all({ from, to });
     },
     getRaw({ from = 0, to = Number.MAX_SAFE_INTEGER } = {}) {
       return rawRows.all({ from, to });

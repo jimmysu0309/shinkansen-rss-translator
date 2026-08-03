@@ -41,7 +41,15 @@ describe('parseOpml', () => {
     const rows = parseOpml(opml);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ source_url: 'https://ex.com/feed', title: 'Tech Blog' });
+    expect(rows[0].html_url).toBe('https://ex.com'); // htmlUrl 另外保留(匯入端自我參照還原用)
     expect(rows[1].source_url).toBe('https://news.com/rss');
+    expect(rows[1].html_url).toBe(null); // 沒有 htmlUrl
+  });
+
+  it('只有 htmlUrl(當作 source_url)→ html_url 不重複附', () => {
+    const rows = parseOpml('<opml><body><outline text="h" htmlUrl="https://only-html.com/"/></body></opml>');
+    expect(rows[0].source_url).toBe('https://only-html.com/');
+    expect(rows[0].html_url).toBe(null); // 與 source_url 同值就不重複
   });
 
   it('資料夾型 outline(無 xmlUrl)被跳過,子項仍取得', () => {

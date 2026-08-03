@@ -6,7 +6,7 @@
 //   ✓ 查無單價 / Google 引擎 → 0
 //   ✗ 不驗:單價本身是否最新(那由 vendor model-pricing 維護)
 import { describe, it, expect } from 'vitest';
-import { costForUsage, formatUsd, MODEL_PRICING, EXTRA_MODEL_PRICING } from '../src/pricing.js';
+import { costForUsage, MODEL_PRICING, EXTRA_MODEL_PRICING } from '../src/pricing.js';
 
 describe('costForUsage', () => {
   it('gemini-3.1-flash-lite:input 0.25 / output 1.50 per Mtok', () => {
@@ -69,11 +69,4 @@ describe('costForUsage', () => {
   });
 });
 
-describe('formatUsd', () => {
-  it('0 → $0;小額顯示到 4 位', () => {
-    expect(formatUsd(0)).toBe('$0');
-    expect(formatUsd(0.0001234)).toBe('$0.0001');
-    expect(formatUsd(0.123)).toBe('$0.123');
-    expect(formatUsd(1.5)).toBe('$1.50');
-  });
-});
+// 註:formatUsd 已移除(只有前端 fmtUsd 一份實作,後端無人使用)。

@@ -26,6 +26,13 @@ const inFlight = new Set();
 /** 此 feed 是否正在處理中(供 API 層先擋 409,避免重設狀態後才發現撞鎖) */
 export function isFeedInFlight(feedId) { return inFlight.has(feedId); }
 
+// 每個 feed 最近一次處理結果(掛在 ctx 上:同 DB 同一份,測試各自隔離)。
+// 背景執行(202)後前端輪詢完成時,靠這個拿到「新增/翻譯/失敗」數字顯示 toast。
+function lastRunMap(ctx) { return (ctx._lastRun ??= new Map()); }
+
+/** 最近一次處理結果:{ finishedAt, fetched, added, translated, failed, ... } 或 { finishedAt, error };沒跑過為 null */
+export function getLastRun(ctx, feedId) { return lastRunMap(ctx).get(feedId) ?? null; }
+
 /**
  * 由全域 settings + feed 覆寫,組出翻譯一篇文章要用的 opts。
  * feed 欄位優先於全域;全域缺則用引擎預設。
@@ -61,8 +68,14 @@ export async function processFeed(ctx, feed, deps = {}) {
     throw err;
   }
   inFlight.add(feed.id);
+  const now = deps.now || (() => Date.now());
   try {
-    return await processFeedLocked(ctx, feed, deps);
+    const result = await processFeedLocked(ctx, feed, deps);
+    lastRunMap(ctx).set(feed.id, { finishedAt: now(), ...result });
+    return result;
+  } catch (err) {
+    lastRunMap(ctx).set(feed.id, { finishedAt: now(), error: String(err?.message || err) });
+    throw err;
   } finally {
     inFlight.delete(feed.id);
   }
@@ -84,11 +97,17 @@ async function processFeedLocked(ctx, feed, deps) {
   } catch (err) {
     ctx.feeds.setFetchMeta(feed.id, { checkedAt: now(), error: String(err).slice(0, 500) });
     log('error', 'fetch', `抓取失敗:${feed.title || feed.source_url}`, String(err?.message || err));
+    err.logged = true; // 已記 log;背景執行的外層 catch 看到此旗標就不重複記
     throw err;
   }
   ctx.feeds.setFetchMeta(feed.id, {
     etag: res.etag, lastModified: res.lastModified, checkedAt: now(), error: null,
   });
+  // 標題回填:新增 feed 沒填標題時,首次抓到來源標題就補上(卡片 / RSS 輸出不再顯示裸網址)
+  if (!feed.title && res.title) {
+    ctx.feeds.update(feed.id, { title: res.title });
+    feed = { ...feed, title: res.title }; // 後續 log 用新標題
+  }
 
   // 2. upsert(依 guid 去重),只有新條目會被建立。
   //    注意:即使 304(未更新)也要往下翻 pending —— 之前失敗 / 未翻的 backlog 必須清掉,

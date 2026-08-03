@@ -55,12 +55,3 @@ export function costForUsage(model, usage = {}, pricingSettings = null) {
   const outputCost = output / 1e6 * p.outputPerMTok;
   return inputCost + outputCost;
 }
-
-/** 格式化美元(小額顯示到 4 位)。 */
-export function formatUsd(n) {
-  n = Number(n) || 0;
-  if (n === 0) return '$0';
-  if (n < 0.01) return '$' + n.toFixed(4);
-  if (n < 1) return '$' + n.toFixed(3);
-  return '$' + n.toFixed(2);
-}
