@@ -286,6 +286,35 @@ describe('processFeed 編排', () => {
 describe('fetchFeed', () => {
   const RSS = '<rss version="2.0"><channel><title>T</title></channel></rss>';
 
+  it('XML 解析失敗(截斷回應)→ 重抓一次成功', async () => {
+    const TRUNCATED = RSS.slice(0, 30); // 模擬上游截斷:缺結尾標籤
+    let calls = 0;
+    const fake = async () => ({
+      status: 200, ok: true, headers: { get: () => null },
+      text: async () => (++calls === 1 ? TRUNCATED : RSS),
+    });
+    const r = await fetchFeed('https://ex.com/f', { fetchImpl: fake, parseRetryDelayMs: 0 });
+    expect(calls).toBe(2);
+    expect(r.title).toBe('T');
+  });
+
+  it('重抓仍解析失敗 → 拋錯;共打兩次', async () => {
+    let calls = 0;
+    const fake = async () => ({
+      status: 200, ok: true, headers: { get: () => null },
+      text: async () => { calls++; return RSS.slice(0, 30); },
+    });
+    await expect(fetchFeed('https://ex.com/f', { fetchImpl: fake, parseRetryDelayMs: 0 })).rejects.toThrow();
+    expect(calls).toBe(2);
+  });
+
+  it('HTTP 錯誤不重試(只打一次,避免掛掉來源拖慢整輪)', async () => {
+    let calls = 0;
+    const fake = async () => { calls++; return { status: 500, ok: false, headers: { get: () => null }, text: async () => '' }; };
+    await expect(fetchFeed('https://ex.com/f', { fetchImpl: fake, parseRetryDelayMs: 0 })).rejects.toThrow('HTTP 500');
+    expect(calls).toBe(1);
+  });
+
   it('帶 conditional GET 標頭與 timeout signal', async () => {
     let saw;
     const fake = async (url, init) => {

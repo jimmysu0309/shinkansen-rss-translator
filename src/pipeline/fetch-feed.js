@@ -56,8 +56,10 @@ export async function parseFeedXml(xml) {
 
 /**
  * 抓取 feed,支援 conditional GET。
+ * XML 解析失敗(上游偶發截斷回應,如 Daring Fireball 的「Unclosed root tag」)視為
+ * 暫時性故障,隔幾秒重抓一次;HTTP 錯誤與網路逾時不重試(避免掛掉的來源讓每輪多等一倍)。
  * @param {string} url
- * @param {{etag?, lastModified?, fetchImpl?, timeoutMs?}} [opts] fetchImpl 供測試注入
+ * @param {{etag?, lastModified?, fetchImpl?, timeoutMs?, parseRetryDelayMs?}} [opts] fetchImpl 供測試注入
  * @returns {Promise<{notModified:boolean, title?, items, etag, lastModified}>}
  */
 export async function fetchFeed(url, opts = {}) {
@@ -66,20 +68,36 @@ export async function fetchFeed(url, opts = {}) {
   if (opts.etag) headers['if-none-match'] = opts.etag;
   if (opts.lastModified) headers['if-modified-since'] = opts.lastModified;
 
-  // timeout:掛掉的來源不能卡住整條管線(undici 預設 headers timeout 長達 5 分鐘)
-  const resp = await doFetch(url, { headers, signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) });
-  if (resp.status === 304) {
-    return { notModified: true, items: [], etag: opts.etag || null, lastModified: opts.lastModified || null };
-  }
-  if (!resp.ok) throw new Error(`抓取 ${url} 失敗:HTTP ${resp.status}`);
+  const attempt = async () => {
+    // timeout:掛掉的來源不能卡住整條管線(undici 預設 headers timeout 長達 5 分鐘)
+    const resp = await doFetch(url, { headers, signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) });
+    if (resp.status === 304) {
+      return { notModified: true, items: [], etag: opts.etag || null, lastModified: opts.lastModified || null };
+    }
+    if (!resp.ok) throw new Error(`抓取 ${url} 失敗:HTTP ${resp.status}`);
 
-  const xml = await resp.text();
-  const { title, items } = await parseFeedXml(xml);
-  return {
-    notModified: false,
-    title,
-    items,
-    etag: resp.headers.get('etag') || null,
-    lastModified: resp.headers.get('last-modified') || null,
+    const xml = await resp.text();
+    let parsed;
+    try {
+      parsed = await parseFeedXml(xml);
+    } catch (err) {
+      err.isParseError = true; // 標記給外層判斷是否重試
+      throw err;
+    }
+    return {
+      notModified: false,
+      title: parsed.title,
+      items: parsed.items,
+      etag: resp.headers.get('etag') || null,
+      lastModified: resp.headers.get('last-modified') || null,
+    };
   };
+
+  try {
+    return await attempt();
+  } catch (err) {
+    if (!err.isParseError) throw err;
+    await new Promise((r) => setTimeout(r, opts.parseRetryDelayMs ?? 3000));
+    return attempt(); // 第二次再失敗就往外拋(交由上層記 log / last_error)
+  }
 }
