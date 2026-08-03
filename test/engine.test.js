@@ -98,3 +98,35 @@ describe('Google 翻譯引擎(免費)', () => {
     expect(usage.chars).toBeGreaterThan(0);
   }, 30_000);
 });
+
+// OpenCC 簡轉繁引擎:本機字典轉換,完全離線、確定性 → 不需任何 gate。
+// 驗:轉換正確(含台灣慣用詞)、段數進出相等、usage token 皆 0。
+// 不驗:HTML 切段回填(見 pipeline.test.js 的 translateEntry 離線整合)。
+describe('OpenCC 簡轉繁引擎(離線)', () => {
+  it('engine:opencc → s2twp 轉換(繁體 + 台灣詞),usage token 皆 0', async () => {
+    const { translations, usage, hadMismatch } = await translateTexts(
+      ['软件优化网络', '云计算和视频数据'],
+      { engine: 'opencc' },
+    );
+    expect(translations).toEqual(['軟體最佳化網路', '雲端計算和影片資料']);
+    expect(usage.inputTokens).toBe(0);
+    expect(usage.outputTokens).toBe(0);
+    expect(usage.chars).toBeGreaterThan(0);
+    expect(hadMismatch).toBe(false);
+  });
+
+  it('段數進出相等,空字串/繁體/英文原樣通過', async () => {
+    const input = ['', '已經是繁體', 'English only', '简体字'];
+    const { translations } = await translateTexts(input, { engine: 'opencc' });
+    expect(translations).toHaveLength(input.length);
+    expect(translations[0]).toBe('');
+    expect(translations[1]).toBe('已經是繁體');
+    expect(translations[2]).toBe('English only');
+    expect(translations[3]).toBe('簡體字');
+  });
+
+  it('不需 API key(缺 apiKey 不會 throw)', async () => {
+    const { translations } = await translateTexts(['测试'], { engine: 'opencc' });
+    expect(translations).toEqual(['測試']);
+  });
+});

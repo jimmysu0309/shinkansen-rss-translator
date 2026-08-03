@@ -12,6 +12,7 @@ import './engine-adapters/browser-shim.js';
 
 import { translateBatch } from '../vendor/shinkansen/shinkansen/lib/gemini.js';
 import { translateGoogleBatch } from '../vendor/shinkansen/shinkansen/lib/google-translate.js';
+import * as OpenCC from 'opencc-js';
 import {
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_FORBIDDEN_TERMS,
@@ -38,7 +39,16 @@ export const DEFAULT_TEMPERATURE = 1;
 export const ENGINES = [
   { id: 'gemini', label: 'Gemini（AI 翻譯，品質最佳，需 API key）' },
   { id: 'google', label: 'Google 翻譯（免費、快，不需 key、品質普通）' },
+  { id: 'opencc', label: 'OpenCC 簡轉繁（免費、零失真，僅簡中來源）' },
 ];
+
+// OpenCC 簡→繁＋台灣慣用詞(等同 Python OpenCC 的 s2twp config)。
+// 轉換設定寫死 cn→twp:所有簡中 feed 場景都用它,有別的需求再開放選項。
+let openccConvert = null;
+function getOpenccConvert() {
+  if (!openccConvert) openccConvert = OpenCC.Converter({ from: 'cn', to: 'twp' });
+  return openccConvert;
+}
 
 const EMPTY_USAGE = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
 
@@ -77,17 +87,25 @@ export function buildGeminiSettings(opts = {}) {
 }
 
 /**
- * 翻譯一組文字段落。依 opts.engine 分派到 Gemini 或 Google 翻譯。
+ * 翻譯一組文字段落。依 opts.engine 分派到 Gemini、Google 翻譯或 OpenCC。
  * 回傳形狀統一:{ translations, usage, hadMismatch }。
  *   - gemini:usage 帶真實 token 數
  *   - google:免費,usage token 皆 0,附 chars 供參考
+ *   - opencc:本機字典轉換(簡→繁+台灣詞),免網路,usage token 皆 0
  *
  * @param {string[]} texts
- * @param {object} opts  engine('gemini'|'google')、targetLanguage、及 buildGeminiSettings 各欄位
+ * @param {object} opts  engine('gemini'|'google'|'opencc')、targetLanguage、及 buildGeminiSettings 各欄位
  * @returns {Promise<{translations:string[], usage:object, hadMismatch:boolean}>}
  */
 export async function translateTexts(texts, opts = {}) {
   const engine = opts.engine || 'gemini';
+
+  if (engine === 'opencc') {
+    const convert = getOpenccConvert();
+    const translations = texts.map((t) => convert(String(t ?? '')));
+    const chars = texts.reduce((n, t) => n + String(t ?? '').length, 0);
+    return { translations, usage: { ...EMPTY_USAGE, chars }, hadMismatch: false };
+  }
 
   if (engine === 'google') {
     const target = opts.targetLanguage || DEFAULT_TARGET_LANGUAGE;

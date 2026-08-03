@@ -449,6 +449,18 @@ describe('引擎欄位', () => {
     const d = (await app.inject({ method: 'GET', url: '/api/defaults' })).json();
     expect(d.engines.map(e => e.id)).toContain('google');
     expect(d.engines.map(e => e.id)).toContain('gemini');
+    expect(d.engines.map(e => e.id)).toContain('opencc');
+  });
+  it('無 API key 環境:opencc feed 可 refresh,gemini feed 被 400 擋', async () => {
+    const ctx2 = createDb(':memory:');
+    const app2 = buildServer(ctx2, { processDeps: fakeProcessDeps }); // 不給 apiKey
+    const occ = (await app2.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/occ', engine: 'opencc' } })).json();
+    expect(occ.engine).toBe('opencc');
+    const rOcc = await app2.inject({ method: 'POST', url: `/api/feeds/${occ.id}/refresh` });
+    expect(rOcc.statusCode).toBe(200); // opencc 不需 key
+    const gem = (await app2.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/gem', engine: 'gemini' } })).json();
+    const rGem = await app2.inject({ method: 'POST', url: `/api/feeds/${gem.id}/refresh` });
+    expect(rGem.statusCode).toBe(400); // gemini 缺 key 才擋
   });
 });
 

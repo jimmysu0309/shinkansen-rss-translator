@@ -24,8 +24,8 @@ export async function translateEntry(entry, opts = {}) {
   const title = entry.title || '';
   const hasTitle = !!title.trim();
 
-  // Google 翻譯是純文字 MT,不吃 ⟦⟧ 佔位符 → 用 textnode 模式;Gemini 用 block+佔位符
-  const mode = opts.engine === 'google' ? 'textnode' : 'placeholder';
+  // Google 翻譯 / OpenCC 是純文字轉換,不吃 ⟦⟧ 佔位符 → 用 textnode 模式;Gemini 用 block+佔位符
+  const mode = opts.engine === 'google' || opts.engine === 'opencc' ? 'textnode' : 'placeholder';
   const { texts, reassemble } = segmentHtml(entry.contentHtml || '', { mode });
   const batch = hasTitle ? [title, ...texts] : texts;
 

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS feeds (
   source_url         TEXT NOT NULL UNIQUE,
   title              TEXT,
   enabled            INTEGER NOT NULL DEFAULT 1,
-  engine             TEXT NOT NULL DEFAULT 'gemini',   -- gemini | openai | google
+  engine             TEXT NOT NULL DEFAULT 'gemini',   -- gemini | openai | google | opencc
   model              TEXT,                             -- null = 用全域預設
   service_tier       TEXT,
   fetch_article      INTEGER NOT NULL DEFAULT 0,       -- 是否用 readability 抓全文

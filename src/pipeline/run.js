@@ -140,7 +140,7 @@ async function processFeedLocked(ctx, feed, deps) {
         tokensOut: r.usage?.outputTokens || 0,
         translatedAt: now(),
       });
-      const usageModel = opts.engine === 'google' ? 'google-translate' : opts.model;
+      const usageModel = { google: 'google-translate', opencc: 'opencc-s2twp' }[opts.engine] || opts.model;
       ctx.usage.log({ ts: now(), feedId: feed.id, entryId: e.id, model: usageModel, usage: r.usage || {} });
       log('info', 'translate', `已翻譯:${e.title || '(無標題)'}`,
         `模型 ${usageModel}｜in ${r.usage?.inputTokens || 0} out ${r.usage?.outputTokens || 0}`);

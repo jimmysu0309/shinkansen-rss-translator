@@ -240,7 +240,7 @@ async function loadFeeds() {
       <div class="feed-meta">
         ${statusBadges(counts)}
         <span>引擎:${engineLabel(f.engine)}</span>
-        ${f.engine !== 'google' ? `<span>模型:${f.model ? esc(f.model) : '繼承全域'}</span>` : ''}
+        ${f.engine !== 'google' && f.engine !== 'opencc' ? `<span>模型:${f.model ? esc(f.model) : '繼承全域'}</span>` : ''}
         ${f.fetch_article ? '<span>全文抓取</span>' : ''}
         ${f.last_error ? `<span class="badge error">抓取錯誤</span>` : ''}
       </div>
@@ -592,7 +592,7 @@ function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;'
 function fmtTime(ts) { const d = new Date(Number(ts) || 0); return d.toLocaleString('sv').slice(0, 19); }
 function fmt(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(n); }
 function fmtUsd(n) { n = Number(n) || 0; if (n === 0) return '$0'; if (n < 0.01) return '$' + n.toFixed(4); if (n < 1) return '$' + n.toFixed(3); return '$' + n.toFixed(2); }
-function engineLabel(id) { return id === 'google' ? 'Google 翻譯' : id === 'gemini' ? 'Gemini' : '繼承全域'; }
+function engineLabel(id) { return id === 'opencc' ? 'OpenCC 簡轉繁' : id === 'google' ? 'Google 翻譯' : id === 'gemini' ? 'Gemini' : '繼承全域'; }
 
 // 複製文字:優先 clipboard API(需 secure context),失敗則用暫時 textarea 後備
 async function copyText(text) {
