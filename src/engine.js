@@ -15,12 +15,13 @@ import { translateGoogleBatch } from '../vendor/shinkansen/shinkansen/lib/google
 import {
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_FORBIDDEN_TERMS,
+  isPromptUnchangedFromDefault,
 } from '../vendor/shinkansen/shinkansen/lib/storage.js';
 import {
   DEFAULT_CHARS_PER_BATCH,
 } from '../vendor/shinkansen/shinkansen/lib/constants.js';
 
-export { DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS };
+export { DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, isPromptUnchangedFromDefault };
 
 // 預設模型 = gemini-3.1-flash-lite(對應現有 rssbox 的 Lite profile,便宜、品質夠)。
 // 引擎的 pickThinkingConfig 是為 gemini-3 系列的 thinkingLevel API 設計,故用 gemini-3;

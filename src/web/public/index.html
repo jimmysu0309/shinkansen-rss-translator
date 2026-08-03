@@ -125,11 +125,12 @@
 
       <div class="actions">
         <button id="save-settings" class="primary">儲存設定</button>
-        <button id="export-settings" class="ghost">匯出設定</button>
-        <button id="import-settings" class="ghost">匯入設定</button>
-        <input type="file" id="settings-file" accept=".json,application/json" hidden>
+        <button id="export-backup" class="ghost" title="下載完整備份 JSON:全部設定 + feeds(不含 API 金鑰)">匯出備份</button>
+        <button id="import-backup" class="ghost" title="匯入備份 JSON,還原設定與 feeds(也吃舊版「匯出設定」檔)">匯入備份</button>
+        <input type="file" id="backup-file" accept=".json,application/json" hidden>
         <span id="save-status" class="save-status"></span>
       </div>
+      <p class="hint">備份含全部設定與 feeds（不含 API 金鑰）；匯入時 feeds 以來源網址比對，已存在則更新設定、不動文章。</p>
 
       <p class="hint license-note">授權：<a href="https://www.elastic.co/licensing/elastic-license" target="_blank" rel="noopener">Elastic License 2.0 (ELv2)</a> — 可自用 / 修改，但不可包成託管服務販售（比照翻譯引擎 <a href="https://github.com/jimmysu0309/shinkansen" target="_blank" rel="noopener">Shinkansen</a>）。</p>
     </section>

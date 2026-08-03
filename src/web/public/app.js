@@ -58,8 +58,10 @@ function fillEngineSelect(sel, includeInherit) {
 // 模型計價列(照 Shinkansen options:每個內建計價的模型一列,input/output 覆蓋,placeholder = 內建價)
 const MODEL_LABELS = {
   'gemini-3.1-flash-lite': 'Flash Lite',
+  'gemini-3.5-flash-lite': 'Flash Lite 3.5',
   'gemini-3-flash-preview': 'Flash',
-  'gemini-3.5-flash': 'Flash 3.5',
+  'gemini-3.5-flash': 'Flash 3.5',   // 已退出選單;歷史用量計價仍要顯示,保留 label
+  'gemini-3.6-flash': 'Flash 3.6',
 };
 function renderPricingRows(overrides) {
   const wrap = $('#pricing-rows');
@@ -168,25 +170,25 @@ $('#test-key').addEventListener('click', async () => {
   finally { btn.textContent = '測試'; btn.disabled = false; }
 });
 
-// 匯出設定(下載 JSON)
-$('#export-settings').addEventListener('click', () => {
+// 匯出完整備份(下載 JSON:設定 + feeds)
+$('#export-backup').addEventListener('click', () => {
   const a = document.createElement('a');
-  a.href = '/api/settings/export';
-  a.download = 'shinkansen-feed-settings.json';
+  a.href = '/api/backup/export';
+  a.download = 'shinkansen-feed-backup.json';
   a.click();
 });
 
-// 匯入設定(選檔 → PUT;與儲存共用同一條路徑,伺服器白名單守門)
-$('#import-settings').addEventListener('click', () => $('#settings-file').click());
-$('#settings-file').addEventListener('change', async (e) => {
+// 匯入備份(選檔 → POST;伺服器負責白名單與 feed upsert,也吃舊版設定匯出檔)
+$('#import-backup').addEventListener('click', () => $('#backup-file').click());
+$('#backup-file').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   try {
     const data = JSON.parse(await file.text());
-    const settings = data.settings ?? data; // 支援匯出檔({exportedAt, settings})或裸設定物件
-    await api('PUT', '/api/settings', settings);
+    const r = await api('POST', '/api/backup/import', data);
     await loadSettings(); // 匯入後重載畫面
-    toast('已匯入設定');
+    loadFeeds();
+    toast(`已匯入:設定 ${r.settings} 鍵、feed 新增 ${r.feedsAdded}、更新 ${r.feedsUpdated}`);
   } catch (err) { toast('匯入失敗:' + err.message); }
   finally { e.target.value = ''; } // 允許重複選同一檔
 });
@@ -218,13 +220,17 @@ async function loadFeeds() {
   list.innerHTML = feeds.map(f => {
     const counts = f.counts || { done: 0, pending: 0, error: 0 };
     const rssUrl = `${location.origin}/rss/${f.id}`;
-    return `<div class="feed-item" data-id="${f.id}">
+    return `<div class="feed-item${f.enabled ? '' : ' disabled'}" data-id="${f.id}">
       <div class="feed-head">
         <div>
           <div class="feed-title">${esc(f.title || f.source_url)}${f.enabled ? '' : ' <span class="badge">已停用</span>'}</div>
           <div class="feed-url">${esc(f.source_url)}</div>
         </div>
         <div class="feed-actions">
+          <label class="switch" title="${f.enabled ? '停用此 feed（排程略過，RSS 輸出仍可讀）' : '啟用此 feed'}">
+            <input type="checkbox" class="feed-toggle" ${f.enabled ? 'checked' : ''}>
+            <span class="slider"></span>
+          </label>
           <button class="ghost" data-act="edit">編輯</button>
           ${counts.error ? '<button class="ghost" data-act="retry">重翻</button>' : ''}
           <button class="ghost" data-act="refresh">刷新</button>
@@ -249,7 +255,6 @@ async function loadFeeds() {
         </div>
         <div class="edit-row">
           <label class="checkbox-label"><input type="checkbox" data-f="fetch_article" ${f.fetch_article ? 'checked' : ''}><span>抓取全文</span></label>
-          <label class="checkbox-label"><input type="checkbox" data-f="enabled" ${f.enabled ? 'checked' : ''}><span>啟用</span></label>
           <button class="danger" data-act="retranslate" title="所有文章(含已翻)重翻一次,套用目前的模型/prompt/抓全文設定">全部重譯</button>
           <div class="edit-actions">
             <button class="primary" data-act="save">儲存</button>
@@ -309,12 +314,23 @@ $('#feed-list').addEventListener('click', async (e) => {
         engine: val('engine').value,          // engine 一律具體值(NOT NULL)
         model: val('model').value || null,    // model 可為 null = 繼承全域
         fetch_article: val('fetch_article').checked,
-        enabled: val('enabled').checked,
+        // enabled 不在這裡:卡片右上的 toggle 是唯一入口(單一資料源)
       };
       await api('PATCH', `/api/feeds/${id}`, patch);
       toast('已更新'); loadFeeds();
     }
   } catch (err) { toast('操作失敗:' + err.message); btn.textContent = origLabel; btn.disabled = false; }
+});
+
+// 啟用 / 停用 toggle(change 事件;按鈕類操作走上面的 click 委派)
+$('#feed-list').addEventListener('change', async (e) => {
+  const t = e.target.closest('.feed-toggle'); if (!t) return;
+  const id = e.target.closest('.feed-item').dataset.id;
+  try {
+    await api('PATCH', `/api/feeds/${id}`, { enabled: t.checked });
+    toast(t.checked ? '已啟用' : '已停用（排程略過，RSS 輸出仍可讀）');
+    loadFeeds();
+  } catch (err) { toast('操作失敗:' + err.message); t.checked = !t.checked; }
 });
 
 // OPML 匯出

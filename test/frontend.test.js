@@ -43,6 +43,7 @@ function mockFetch(url) {
   const u = String(url);
   const json = (d) => Promise.resolve({ ok: true, headers: { get: () => 'application/json' }, json: () => Promise.resolve(d), text: () => Promise.resolve('') });
   if (u.endsWith('/api/defaults')) return json(DEFAULTS);
+  if (u.endsWith('/api/backup/import')) return json({ settings: 1, feedsAdded: 2, feedsUpdated: 0, feedsSkipped: 0 });
   if (u.endsWith('/api/settings')) return json({});
   if (u.endsWith('/api/feeds')) return json(FEEDS);
   if (u.includes('/api/usage/records')) return json({ records: [], total: 0 });
@@ -117,22 +118,47 @@ describe('前端:各 feed 用量排序', () => {
   });
 });
 
-describe('前端:匯入設定', () => {
+describe('前端:匯入備份', () => {
   beforeEach(boot);
 
-  it('選檔後 PUT 設定內容(支援匯出檔形狀)並重載畫面', async () => {
-    const input = document.querySelector('#settings-file');
-    const payload = { exportedAt: '2026-07-05', settings: { model: 'imported-model' } };
-    const file = new File([JSON.stringify(payload)], 'settings.json', { type: 'application/json' });
+  it('選檔後 POST 整份備份到 /api/backup/import(形狀判讀交給伺服器)', async () => {
+    const input = document.querySelector('#backup-file');
+    const payload = { exportedAt: '2026-08-03', settings: { model: 'imported-model' }, feeds: [{ source_url: 'https://x.com/f' }] };
+    const file = new File([JSON.stringify(payload)], 'backup.json', { type: 'application/json' });
     Object.defineProperty(input, 'files', { value: [file], configurable: true });
     input.dispatchEvent(new Event('change'));
     await new Promise((r) => setTimeout(r, 30));
 
-    const putCall = global.fetch.mock.calls.find(
-      (c) => c[1]?.method === 'PUT' && String(c[0]).endsWith('/api/settings'),
+    const postCall = global.fetch.mock.calls.find(
+      (c) => c[1]?.method === 'POST' && String(c[0]).endsWith('/api/backup/import'),
     );
-    expect(putCall).toBeTruthy();
-    expect(JSON.parse(putCall[1].body)).toEqual({ model: 'imported-model' }); // 只送 settings 內容
+    expect(postCall).toBeTruthy();
+    expect(JSON.parse(postCall[1].body)).toEqual(payload); // 整份原樣上送
+  });
+});
+
+describe('前端:feed 啟用/停用 toggle', () => {
+  beforeEach(boot);
+
+  it('卡片有 toggle,切換後 PATCH enabled', async () => {
+    const card = document.querySelector('#feed-list .feed-item');
+    const t = card.querySelector('.feed-toggle');
+    expect(t).toBeTruthy();
+    expect(t.checked).toBe(true); // FEEDS fixture enabled:1
+
+    t.checked = false;
+    t.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 30));
+
+    const patchCall = global.fetch.mock.calls.find(
+      (c) => c[1]?.method === 'PATCH' && String(c[0]).endsWith('/api/feeds/1'),
+    );
+    expect(patchCall).toBeTruthy();
+    expect(JSON.parse(patchCall[1].body)).toEqual({ enabled: false });
+  });
+
+  it('編輯面板不再有 enabled 欄位(toggle 是唯一入口,防雙路徑 drift)', () => {
+    expect(document.querySelector('#feed-list [data-f="enabled"]')).toBeNull();
   });
 });
 

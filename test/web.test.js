@@ -60,20 +60,116 @@ describe('設定 API', () => {
     expect(ctx.settings.get('hax')).toBeUndefined();
   });
 
-  it('匯出設定:帶 content-disposition,不含 apiKey', async () => {
+  it('匯出備份:帶 content-disposition,含設定與 feeds,不含 apiKey / 抓取狀態', async () => {
     await app.inject({ method: 'PUT', url: '/api/settings', payload: { apiKey: 'AQ.s', model: 'm', engine: 'google' } });
-    const res = await app.inject({ method: 'GET', url: '/api/settings/export' });
-    expect(res.headers['content-disposition']).toContain('shinkansen-feed-settings.json');
+    await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', title: 'Ex', fetch_article: true } });
+    const res = await app.inject({ method: 'GET', url: '/api/backup/export' });
+    expect(res.headers['content-disposition']).toContain('shinkansen-feed-backup.json');
     const body = res.json();
     expect(body.settings.model).toBe('m');
     expect(body.settings.engine).toBe('google');
     expect(body.settings.apiKey).toBeUndefined();
+    expect(body.feeds).toHaveLength(1);
+    expect(body.feeds[0]).toMatchObject({ source_url: 'https://ex.com/feed', title: 'Ex', fetch_article: 1, enabled: 1 });
+    expect(body.feeds[0].id).toBeUndefined();   // 不備份內部 id
+    expect(body.feeds[0].etag).toBeUndefined(); // 不備份抓取狀態
   });
 
   it('測試金鑰:沒金鑰 → ok:false(金鑰只來自設定,不讀 env)', async () => {
     const noKeyApp = buildServer(createDb(':memory:'), {}); // 無 opts.apiKey、settings 也沒 apiKey
     const res = await noKeyApp.inject({ method: 'POST', url: '/api/test-key', payload: {} });
     expect(res.json()).toEqual({ ok: false, error: '沒有金鑰可測試' });
+  });
+});
+
+describe('預設 prompt 升級遷移', () => {
+  it('存的 systemPrompt 是舊版預設字面值(未客製)→ 開機刪除,新預設生效', async () => {
+    const { DEFAULT_SYSTEM_PROMPT } = await import('../src/engine.js');
+    // 模擬舊版預設:拿現版預設去掉 v2.0.74 新增的第 6 條句尾標點規則(normalize 應視為同一份)
+    const oldDefault = DEFAULT_SYSTEM_PROMPT.replace(/\n6\. 忠於原文的句尾標點[^\n]*\n/, '\n');
+    expect(oldDefault).not.toBe(DEFAULT_SYSTEM_PROMPT); // 確認真的有差,測試才有意義
+    const c = createDb(':memory:');
+    c.settings.set('systemPrompt', oldDefault);
+    buildServer(c, {});
+    expect(c.settings.get('systemPrompt')).toBeUndefined(); // 已刪 → 落回新預設
+  });
+
+  it('真的客製過的 prompt 不動', () => {
+    const c = createDb(':memory:');
+    c.settings.set('systemPrompt', '我的自訂翻譯風格:一律文言文');
+    buildServer(c, {});
+    expect(c.settings.get('systemPrompt')).toBe('我的自訂翻譯風格:一律文言文');
+  });
+});
+
+describe('完整備份匯入', () => {
+  it('round-trip:匯出 → 匯入到全新 DB,設定與 feeds 都還原', async () => {
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { model: 'gemini-3.6-flash', temperature: 0.7 } });
+    await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://a.com/feed', title: 'A', engine: 'google' } });
+    await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://b.com/feed', title: 'B', fetch_article: true } });
+    const backup = (await app.inject({ method: 'GET', url: '/api/backup/export' })).json();
+
+    const fresh = buildServer(createDb(':memory:'), {});
+    const r = (await fresh.inject({ method: 'POST', url: '/api/backup/import', payload: backup })).json();
+    expect(r).toMatchObject({ feedsAdded: 2, feedsUpdated: 0, feedsSkipped: 0 });
+    expect(r.settings).toBeGreaterThanOrEqual(2);
+    const s = (await fresh.inject({ method: 'GET', url: '/api/settings' })).json();
+    expect(s.model).toBe('gemini-3.6-flash');
+    expect(s.temperature).toBe(0.7);
+    const feeds = (await fresh.inject({ method: 'GET', url: '/api/feeds' })).json();
+    expect(feeds).toHaveLength(2);
+    expect(feeds.find(f => f.source_url === 'https://a.com/feed')).toMatchObject({ title: 'A', engine: 'google' });
+    expect(feeds.find(f => f.source_url === 'https://b.com/feed').fetch_article).toBe(1);
+  });
+
+  it('已存在的 feed 依 source_url 更新設定,不重複新增、文章不動', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', title: '舊名' } })).json();
+    ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1', title: 'T', content_html: '<p>x</p>' });
+    const r = (await app.inject({
+      method: 'POST', url: '/api/backup/import',
+      payload: { settings: {}, feeds: [{ source_url: 'https://ex.com/feed', title: '新名', enabled: 0 }] },
+    })).json();
+    expect(r).toMatchObject({ feedsAdded: 0, feedsUpdated: 1 });
+    const list = (await app.inject({ method: 'GET', url: '/api/feeds' })).json();
+    expect(list).toHaveLength(1);
+    expect(list[0].title).toBe('新名');
+    expect(list[0].enabled).toBe(0);
+    expect(ctx.entries.listByFeed(f.id)).toHaveLength(1); // 文章保留
+  });
+
+  it('非 http(s) 的 feed 列入 skipped;設定走白名單', async () => {
+    const r = (await app.inject({
+      method: 'POST', url: '/api/backup/import',
+      payload: { settings: { model: 'ok', hax: 'junk' }, feeds: [{ source_url: 'javascript:alert(1)' }] },
+    })).json();
+    expect(r).toMatchObject({ settings: 1, feedsAdded: 0, feedsSkipped: 1 });
+    expect(ctx.settings.get('hax')).toBeUndefined();
+  });
+
+  it('相容舊版設定匯出檔({settings})與裸設定物件;pollCron 觸發重排', async () => {
+    let changedTo = null;
+    const a = buildServer(createDb(':memory:'), { onPollCronChange: (c) => { changedTo = c; } });
+    await a.inject({ method: 'POST', url: '/api/backup/import', payload: { exportedAt: 'x', settings: { model: 'm1' } } });
+    expect((await a.inject({ method: 'GET', url: '/api/settings' })).json().model).toBe('m1');
+    await a.inject({ method: 'POST', url: '/api/backup/import', payload: { model: 'm2', pollCron: '0 * * * *' } });
+    expect((await a.inject({ method: 'GET', url: '/api/settings' })).json().model).toBe('m2');
+    expect(changedTo).toBe('0 * * * *');
+  });
+
+  it('格式不正確(settings 非物件)→ 400', async () => {
+    const r = await app.inject({ method: 'POST', url: '/api/backup/import', payload: { settings: 'nope', feeds: [] } });
+    expect(r.statusCode).toBe(400);
+  });
+});
+
+describe('模型清單', () => {
+  it('defaults 提供四個可選模型(含 3.6 flash 與 3.5 flash lite),且都有內建計價', async () => {
+    const d = (await app.inject({ method: 'GET', url: '/api/defaults' })).json();
+    const ids = d.models.map(m => m.id);
+    expect(ids).toEqual([
+      'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.6-flash',
+    ]);
+    for (const id of ids) expect(d.modelPricing[id]).toBeTruthy(); // 選得到的模型必有單價(費用統計不落空)
   });
 });
 

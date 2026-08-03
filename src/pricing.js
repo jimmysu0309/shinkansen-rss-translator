@@ -8,9 +8,35 @@
 //   inputCost = (nonCached + cached * (1 - cachedDiscount)) / 1e6 * inputPerMTok
 //   outputCost = output / 1e6 * outputPerMTok
 
-import { getPricingForModel, MODEL_PRICING } from '../vendor/shinkansen/shinkansen/lib/model-pricing.js';
+import {
+  getPricingForModel, MODEL_PRICING as VENDOR_MODEL_PRICING, DEFAULT_GEMINI_CACHED_DISCOUNT,
+} from '../vendor/shinkansen/shinkansen/lib/model-pricing.js';
 
-export { MODEL_PRICING };
+// vendor 計價表(2026-07 校準)之外的本地補充,不動 vendor 檔(鐵律 §2)。
+// 3.5-flash-lite / 3.6-flash 已由 vendor v2.0.64 收錄,本地 entry 已刪(vendor 為準)。
+// gemini-3.5-flash:vendor 已下架,但本專案的費用是「讀取時查表重算」(非上游的寫入時定價),
+// 歷史 usage 紀錄若有此模型,沒有這條會歸零 → 保留末代單價。
+export const EXTRA_MODEL_PRICING = {
+  'gemini-3.5-flash': { inputPerMTok: 1.50, outputPerMTok: 9.00, cachedDiscount: DEFAULT_GEMINI_CACHED_DISCOUNT },
+};
+
+// 對外的完整計價表(前端計價面板 / 費用計算共用同一份)
+export const MODEL_PRICING = { ...VENDOR_MODEL_PRICING, ...EXTRA_MODEL_PRICING };
+
+// 查單價:先走 vendor(含使用者 override 的逐欄 fallback);vendor 查無內建才補查本地表。
+// override 有填 input+output 時 vendor 路徑已涵蓋(不需內建 entry),
+// 走到本地表時只需再套 override 的 cachedDiscount。
+function pricingFor(model, settings) {
+  const p = getPricingForModel(model, settings);
+  if (p) return p;
+  const extra = EXTRA_MODEL_PRICING[model];
+  if (!extra) return null;
+  const oDisc = Number(settings?.modelPricingOverrides?.[model]?.cachedDiscount);
+  return {
+    ...extra,
+    cachedDiscount: (Number.isFinite(oDisc) && oDisc >= 0 && oDisc <= 1) ? oDisc : extra.cachedDiscount,
+  };
+}
 
 /**
  * @param {string} model
@@ -19,7 +45,7 @@ export { MODEL_PRICING };
  * @returns {number} USD(查無單價回 0)
  */
 export function costForUsage(model, usage = {}, pricingSettings = null) {
-  const p = getPricingForModel(model, pricingSettings);
+  const p = pricingFor(model, pricingSettings);
   if (!p) return 0;
   const input = usage.input_tokens ?? usage.inputTokens ?? 0;
   const output = usage.output_tokens ?? usage.outputTokens ?? 0;

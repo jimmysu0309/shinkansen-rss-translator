@@ -192,7 +192,20 @@ td .time { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(-
 
 .rss-row { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
 .rss-row input { font-size: 11px; font-family: ui-monospace, Menlo, monospace; padding: 5px 8px; margin: 0; }
-.feed-actions { display: flex; gap: 4px; }
+.feed-actions { display: flex; gap: 4px; align-items: center; }
+
+/* 啟用/停用開關(雙通道:滑塊位置 + 底色綠/灰;停用另有「已停用」badge + 卡片變淡) */
+.switch { position: relative; display: inline-block; width: 34px; height: 20px; flex: 0 0 auto; margin: 0 4px 0 0; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
+.switch .slider { position: absolute; inset: 0; background: var(--border); border-radius: 999px; cursor: pointer; transition: background .15s; }
+.switch .slider::before { content: ''; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.switch input:checked + .slider { background: var(--ok); }
+.switch input:checked + .slider::before { transform: translateX(14px); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 停用的 feed:內容變淡,但開關與操作按鈕維持全彩(要能一眼找到重新啟用的入口) */
+.feed-item.disabled .feed-title, .feed-item.disabled .feed-url,
+.feed-item.disabled .feed-meta, .feed-item.disabled .rss-row { opacity: .55; }
 
 /* ─── 用量 ─── */
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }

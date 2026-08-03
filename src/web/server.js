@@ -16,6 +16,7 @@ import { fetchFeed as defaultFetchFeed } from '../pipeline/fetch-feed.js';
 import {
   DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, ENGINES,
   DEFAULT_MAX_UNITS_PER_BATCH, DEFAULT_MAX_CHARS_PER_BATCH, DEFAULT_TEMPERATURE,
+  isPromptUnchangedFromDefault,
 } from '../engine.js';
 import { costForUsage, MODEL_PRICING } from '../pricing.js';
 import { feedsToOpml, parseOpml } from '../pipeline/opml.js';
@@ -40,10 +41,12 @@ export const POLL_CRON_OPTIONS = [
   { value: '', label: '關閉自動更新' },
 ];
 
-// 前端下拉可選的模型(對應現有 rssbox 的 Lite / Flash 兩檔)
+// 前端下拉可選的模型(便宜 → 貴排序;單價見 src/pricing.js)
 export const SELECTABLE_MODELS = [
   { id: 'gemini-3.1-flash-lite', label: 'Lite（gemini-3.1-flash-lite）— 便宜' },
+  { id: 'gemini-3.5-flash-lite', label: 'Flash Lite 3.5（gemini-3.5-flash-lite）— 便宜、新一代' },
   { id: 'gemini-3-flash-preview', label: 'Flash（gemini-3-flash-preview）— 品質' },
+  { id: 'gemini-3.6-flash', label: 'Flash 3.6（gemini-3.6-flash）— 品質最佳' },
 ];
 
 // 儲存於 settings 表、但不可透過 GET /api/settings 回傳的敏感鍵
@@ -79,6 +82,17 @@ function safeEqual(a, b) {
 export function buildServer(ctx, opts = {}) {
   // trustProxy:反向代理(https)後面時,selfUrl / OPML 網址才會用 x-forwarded-* 組出正確 scheme+host
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: true });
+
+  // 預設 prompt 升級遷移(引擎升級後一次性):DB 存的 systemPrompt 若只是舊版預設的字面值
+  // (使用者按過「儲存設定」但沒改內容),視為未客製 → 刪除,讓 vendor 新版預設 prompt 生效。
+  // 判定用 vendor 的 isPromptUnchangedFromDefault(normalize 規則跟著上游演進,不自己維護)。
+  {
+    const saved = ctx.settings.get('systemPrompt');
+    if (typeof saved === 'string' && isPromptUnchangedFromDefault(saved, DEFAULT_SYSTEM_PROMPT)) {
+      ctx.settings.remove('systemPrompt');
+      ctx.logs.append({ level: 'info', category: 'system', message: '偵測到未客製的舊版系統 prompt,已自動升級為新版預設' });
+    }
+  }
 
   // ─── 認證(HTTP Basic)───
   // opts.authPassword 有值才啟用;帳號不限、只驗密碼。
@@ -163,28 +177,72 @@ export function buildServer(ctx, opts = {}) {
     return all;
   };
 
-  // ─── 設定 API ───
-  app.get('/api/settings', async () => publicSettings());
-  app.put('/api/settings', async (req) => {
-    const body = req.body || {};
+  // 套用一批設定(白名單守門)。PUT /api/settings 與備份匯入共用這一條路徑。
+  const applySettings = (body) => {
+    let applied = 0;
     for (const [k, v] of Object.entries(body)) {
       if (!SETTING_KEYS.has(k)) continue; // 白名單外的鍵忽略
       // apiKey 空字串代表「不變更」,不覆寫既有金鑰
       if (SECRET_KEYS.has(k) && (v === '' || v == null)) continue;
       ctx.settings.set(k, v);
+      applied++;
     }
     // 更新頻率有變 → 通知 entry 重新排程(即時生效,免重啟)
     if ('pollCron' in body && typeof opts.onPollCronChange === 'function') {
       opts.onPollCronChange(ctx.settings.get('pollCron', DEFAULT_POLL_CRON));
     }
+    return applied;
+  };
+
+  // ─── 設定 API ───
+  app.get('/api/settings', async () => publicSettings());
+  app.put('/api/settings', async (req) => {
+    applySettings(req.body || {});
     return publicSettings();
   });
 
-  // 匯出設定(JSON 下載)。含所有非敏感設定,不含 apiKey。
-  app.get('/api/settings/export', async (req, reply) => {
-    reply.header('content-disposition', 'attachment; filename="shinkansen-feed-settings.json"');
+  // ─── 完整備份(設定 + feeds)───
+  // 只備份使用者設定欄位,不含抓取狀態(etag / last_* / id)與 apiKey。
+  const FEED_BACKUP_FIELDS = ['source_url', 'title', 'category', 'enabled', 'engine', 'model',
+    'service_tier', 'fetch_article', 'target_language', 'system_prompt'];
+
+  app.get('/api/backup/export', async (req, reply) => {
+    reply.header('content-disposition', 'attachment; filename="shinkansen-feed-backup.json"');
     reply.header('content-type', 'application/json; charset=utf-8');
-    return { exportedAt: new Date().toISOString(), settings: publicSettings() };
+    return {
+      exportedAt: new Date().toISOString(),
+      version: APP_VERSION,
+      settings: publicSettings(),
+      feeds: ctx.feeds.list().map((f) => Object.fromEntries(FEED_BACKUP_FIELDS.map((k) => [k, f[k] ?? null]))),
+    };
+  });
+
+  // 匯入備份。接受三種形狀:完整備份 {settings, feeds}、舊版設定匯出 {settings}、裸設定物件。
+  // feeds 以 source_url 為 key upsert:已存在 → 更新設定欄位,不存在 → 新增;文章不動。
+  app.post('/api/backup/import', async (req, reply) => {
+    const body = req.body || {};
+    const settings = body.settings ?? (Array.isArray(body.feeds) ? {} : body);
+    const feeds = Array.isArray(body.feeds) ? body.feeds : [];
+    if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
+      return reply.code(400).send({ error: '備份格式不正確' });
+    }
+    const applied = applySettings(settings);
+
+    let added = 0, updated = 0, skipped = 0;
+    for (const f of feeds) {
+      if (!f || !f.source_url || !isHttpUrl(f.source_url)) { skipped++; continue; }
+      // 只取備份檔內有出現的欄位:缺欄位不覆寫、不預設(手寫的精簡備份也安全)
+      const patch = {};
+      for (const k of FEED_BACKUP_FIELDS) if (k in f) patch[k] = f[k];
+      const existing = ctx.feeds.getByUrl(f.source_url);
+      if (existing) { ctx.feeds.update(existing.id, patch); updated++; }
+      else { ctx.feeds.create(patch); added++; }
+    }
+    ctx.logs.append({
+      level: 'info', category: 'system',
+      message: `匯入備份:設定 ${applied} 鍵,feed 新增 ${added}、更新 ${updated}、略過 ${skipped}`,
+    });
+    return { settings: applied, feedsAdded: added, feedsUpdated: updated, feedsSkipped: skipped };
   });
 
   // 測試 API 金鑰(打 Gemini models 清單)。可帶 body.apiKey 測「還沒存的新 key」。
