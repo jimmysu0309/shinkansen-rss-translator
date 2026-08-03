@@ -235,10 +235,18 @@ function makeEntriesDao(db) {
     /** 翻譯失敗的文章清單(給前端「N 失敗」badge 展開失敗原因用) */
     listErrorsByFeed(feedId) {
       return db.prepare(`
-        SELECT id, title, url, translation_error FROM entries
+        SELECT id, title, url, translation_error, published_at, created_at FROM entries
         WHERE feed_id = ? AND translation_status = 'error'
         ORDER BY published_at DESC, id DESC
       `).all(feedId);
+    },
+    /** 放棄翻譯:失敗文章標成 done(譯文留空 → RSS 輸出退回原文),清掉錯誤、不再重試 */
+    dismissError(id) {
+      const info = db.prepare(`
+        UPDATE entries SET translation_status = 'done', translation_error = NULL
+        WHERE id = ? AND translation_status = 'error'
+      `).run(id);
+      return info.changes > 0;
     },
     /** 更新原文 HTML(供 fetch_article 抓到全文後覆蓋摘要) */
     updateContent(id, html) {

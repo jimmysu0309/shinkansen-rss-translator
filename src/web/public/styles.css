@@ -190,7 +190,10 @@ button.badge.error { cursor: pointer; text-decoration: underline; text-underline
 .badge.error { color: var(--danger); }
 .feed-errors { margin: 10px 0; padding: 12px; background: var(--bg); border-radius: 8px; }
 .feed-errors .err-item + .err-item { margin-top: 10px; }
+.feed-errors .err-head { display: flex; align-items: baseline; gap: 10px; }
+.feed-errors .err-date { font-size: 11px; color: var(--fg-dim); }
 .feed-errors a { font-size: 13px; }
+.feed-errors .err-dismiss { margin-left: auto; padding: 2px 10px; font-size: 12px; }
 .feed-errors .err-msg { font-size: 12px; color: var(--fg-dim); font-family: ui-monospace, SFMono-Regular, monospace; margin-top: 2px; word-break: break-all; }
 .feed-edit { margin: 10px 0; padding: 12px; background: var(--bg); border-radius: 8px; }
 .feed-edit .grid2 { gap: 8px 12px; }

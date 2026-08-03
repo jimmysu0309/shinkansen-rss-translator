@@ -32,8 +32,8 @@ const FEEDS = [
   { id: 2, title: 'err.feed', source_url: 'https://err.example/feed', engine: 'gemini', model: null, enabled: 1, fetch_article: 0, counts: { done: 3, pending: 0, error: 2 } },
 ];
 const FEED2_ERRORS = [
-  { id: 9, title: '壞文章', url: 'https://err.example/a1', translation_error: 'Gemini API 500: internal error' },
-  { id: 10, title: null, url: null, translation_error: '譯文段數不符' },
+  { id: 9, title: '壞文章', url: 'https://err.example/a1', translation_error: 'Gemini API 500: internal error', published_at: Date.UTC(2026, 6, 28) },
+  { id: 10, title: null, url: null, translation_error: '譯文段數不符', published_at: null, created_at: Date.UTC(2026, 7, 1) },
 ];
 
 const USAGE = {
@@ -53,6 +53,7 @@ function mockFetch(url) {
   if (u.endsWith('/api/backup/import')) return json({ settings: 1, feedsAdded: 2, feedsUpdated: 0, feedsSkipped: 0 });
   if (u.endsWith('/api/settings')) return json({});
   if (u.endsWith('/api/feeds/2/errors')) return json(FEED2_ERRORS);
+  if (u.includes('/api/entries/') && u.endsWith('/dismiss-error')) return json({ ok: true });
   if (u.endsWith('/api/feeds')) return json(FEEDS);
   if (u.includes('/api/usage/records')) return json({ records: [], total: 0 });
   if (u.includes('/api/usage')) return json(USAGE);
@@ -121,6 +122,31 @@ describe('前端:失敗 badge 展開失敗原因', () => {
     badge.click();
     await new Promise((r) => setTimeout(r, 10));
     expect(panel.hidden).toBe(true);
+  });
+
+  it('每條顯示日期;「清除」放棄翻譯:移除該條、更新 badge 數字,歸零重載列表', async () => {
+    const card = document.querySelector('#feed-list .feed-item[data-id="2"]');
+    const badge = card.querySelector('[data-act="errors"]');
+    badge.click();
+    await new Promise((r) => setTimeout(r, 10));
+    const panel = card.querySelector('.feed-errors');
+    // 日期:published_at 有值用它;沒有退 created_at
+    expect(panel.textContent).toContain('2026-07-28');
+    expect(panel.textContent).toContain('2026-08-01');
+
+    // 清第一條 → POST dismiss、該條消失、badge 變 1 失敗
+    panel.querySelector('[data-act="dismiss"][data-eid="9"]').click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(global.fetch.mock.calls.some(c => String(c[0]).endsWith('/api/entries/9/dismiss-error'))).toBe(true);
+    expect(panel.textContent).not.toContain('壞文章');
+    expect(badge.textContent).toContain('1 失敗');
+
+    // 清最後一條 → 重載 feeds 列表
+    const feedsCallsBefore = global.fetch.mock.calls.filter(c => String(c[0]).endsWith('/api/feeds')).length;
+    panel.querySelector('[data-act="dismiss"][data-eid="10"]').click();
+    await new Promise((r) => setTimeout(r, 30));
+    const feedsCallsAfter = global.fetch.mock.calls.filter(c => String(c[0]).endsWith('/api/feeds')).length;
+    expect(feedsCallsAfter).toBe(feedsCallsBefore + 1);
   });
 
   it('沒失敗的 feed 不渲染失敗 badge', () => {

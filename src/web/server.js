@@ -377,6 +377,13 @@ export function buildServer(ctx, opts = {}) {
     return ctx.entries.listErrorsByFeed(feed.id);
   });
 
+  // 放棄翻譯:失敗文章標成 done(譯文留空 → RSS 輸出退回原文),之後不再重試
+  app.post('/api/entries/:id/dismiss-error', async (req, reply) => {
+    const ok = ctx.entries.dismissError(Number(req.params.id));
+    if (!ok) return reply.code(404).send({ error: '找不到失敗狀態的文章(可能已重翻成功或已清除)' });
+    return { ok: true };
+  });
+
   // 重翻:把此 feed 翻譯失敗(error)的文章重設為 pending 再翻一次
   app.post('/api/feeds/:id/retry-errors', async (req, reply) => {
     const feed = ctx.feeds.get(Number(req.params.id));

@@ -465,6 +465,20 @@ describe('引擎欄位', () => {
     expect((await app.inject({ method: 'GET', url: '/api/feeds/9999/errors' })).statusCode).toBe(404);
   });
 
+  it('POST /api/entries/:id/dismiss-error 放棄翻譯:失敗清空、RSS 出原文;非 error 404', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/dis' } })).json();
+    const { entry } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1', title: 'Orig Title' });
+    ctx.entries.markError(entry.id, 'PROHIBITED_CONTENT');
+    expect((await app.inject({ method: 'POST', url: `/api/entries/${entry.id}/dismiss-error` })).statusCode).toBe(200);
+    // 失敗清單清空
+    expect((await app.inject({ method: 'GET', url: `/api/feeds/${f.id}/errors` })).json()).toHaveLength(0);
+    // RSS 輸出退回原文標題(done + 譯文 null)
+    const xml = (await app.inject({ method: 'GET', url: `/rss/${f.id}` })).body;
+    expect(xml).toContain('Orig Title');
+    // 再清一次(已非 error)→ 404
+    expect((await app.inject({ method: 'POST', url: `/api/entries/${entry.id}/dismiss-error` })).statusCode).toBe(404);
+  });
+
   it('PATCH source_url:可改、驗格式 400、撞其他 feed 409、同值自身通過', async () => {
     const a = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://a.com/f' } })).json();
     const b = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://b.com/f' } })).json();

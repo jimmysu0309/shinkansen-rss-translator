@@ -106,6 +106,18 @@ describe('feeds DAO', () => {
     expect(errs[0].translation_error).toBe('boom');
   });
 
+  it('dismissError:error → done、清 translation_error;非 error 狀態不動', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
+    const { entry: a } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1' });
+    const { entry: b } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'g2' });
+    ctx.entries.markError(a.id, 'boom');
+    expect(ctx.entries.dismissError(a.id)).toBe(true);
+    const after = ctx.entries.listErrorsByFeed(f.id);
+    expect(after).toHaveLength(0);
+    expect(ctx.entries.dismissError(b.id)).toBe(false); // pending 不可清
+    expect(ctx.entries.dismissError(99999)).toBe(false);
+  });
+
   it('remove 刪除 feed 並連帶刪 entries(CASCADE)', () => {
     const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
     ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1' });

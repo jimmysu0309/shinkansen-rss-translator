@@ -291,12 +291,25 @@ $('#feed-list').addEventListener('click', async (e) => {
       if (!box.hidden) { box.hidden = true; return; } // 再點一次收合
       const errs = await api('GET', `/api/feeds/${id}/errors`);
       box.innerHTML = errs.length
-        ? errs.map((en) => `<div class="err-item">${
-            en.url ? `<a href="${esc(en.url)}" target="_blank" rel="noopener">${esc(en.title || '(無標題)')}</a>`
-                   : `<span>${esc(en.title || '(無標題)')}</span>`
-          }<div class="err-msg">${esc(en.translation_error || '(無錯誤訊息)')}</div></div>`).join('')
+        ? errs.map((en) => `<div class="err-item">
+            <div class="err-head">
+              <span class="err-date">${fmtTime(en.published_at || en.created_at).slice(0, 10)}</span>${
+              en.url ? `<a href="${esc(en.url)}" target="_blank" rel="noopener">${esc(en.title || '(無標題)')}</a>`
+                     : `<span>${esc(en.title || '(無標題)')}</span>`
+              }<button class="ghost err-dismiss" data-act="dismiss" data-eid="${en.id}" title="放棄翻譯：清除失敗狀態，RSS 改出原文，不再重試">清除</button>
+            </div>
+            <div class="err-msg">${esc(en.translation_error || '(無錯誤訊息)')}</div>
+          </div>`).join('')
         : '<div class="err-msg">目前沒有失敗的文章（可能剛重翻成功，重新整理即可）</div>';
       box.hidden = false;
+    } else if (act === 'dismiss') {
+      await api('POST', `/api/entries/${btn.dataset.eid}/dismiss-error`);
+      toast('已放棄翻譯，該篇改出原文');
+      btn.closest('.err-item').remove();
+      const box = $('.feed-errors', item);
+      const left = box.querySelectorAll('.err-item').length;
+      if (left === 0) { loadFeeds(); } // 歸零 → 重載列表,失敗 badge 消失
+      else { $('[data-act="errors"]', item).textContent = `${left} 失敗`; }
     } else if (act === 'retry') {
       btn.textContent = '重翻中…'; btn.disabled = true;
       const r = await api('POST', `/api/feeds/${id}/retry-errors`);
