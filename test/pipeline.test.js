@@ -375,9 +375,10 @@ describe('pruneLogs', () => {
 
 // ─── translateEntry × OpenCC(離線整合:真走 segmenter + 真轉換,不打網路)───
 describe('translateEntry × OpenCC 簡轉繁(離線)', () => {
-  it('簡中含圖 HTML → 繁體 + 台灣詞,結構/圖片/連結保留', async () => {
+  it('簡中含圖 HTML → 繁體 + 台灣詞,結構/圖片/連結保留;code/alt 也轉(對齊 proxy 整份直轉)', async () => {
     const contentHtml = '<p>这款软件通过网络优化了视频质量。</p>'
-      + '<figure><img src="https://ex.com/photo.jpg" alt="phone"></figure>'
+      + '<figure><img src="https://ex.com/photo.jpg" alt="软件截图"></figure>'
+      + '<p>指令示例:<code>调研全球软件市场</code></p>'
       + '<p>更多信息见<a href="https://ex.com">我们的网站</a>。</p>';
     const r = await translateEntry({ title: '软件更新发布', contentHtml }, { engine: 'opencc' });
 
@@ -385,6 +386,10 @@ describe('translateEntry × OpenCC 簡轉繁(離線)', () => {
     expect(r.contentTranslated).toContain('軟體');
     expect(r.contentTranslated).toContain('網路');
     expect(r.contentTranslated).toContain('影片');
+    // 整份直轉:code 內文與 alt 屬性一樣要繁化(textnode 切段會漏掉這兩處)
+    expect(r.contentTranslated).toContain('<code>調研全球軟體市場</code>');
+    expect(r.contentTranslated).toContain('alt="軟體截圖"');
+    // tag/屬性名/網址不受影響
     expect(r.contentTranslated).toContain('<img src="https://ex.com/photo.jpg"');
     expect(r.contentTranslated).toContain('href="https://ex.com"');
     expect(r.hadMismatch).toBe(false);

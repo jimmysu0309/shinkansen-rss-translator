@@ -24,9 +24,13 @@ export async function translateEntry(entry, opts = {}) {
   const title = entry.title || '';
   const hasTitle = !!title.trim();
 
-  // Google 翻譯 / OpenCC 是純文字轉換,不吃 ⟦⟧ 佔位符 → 用 textnode 模式;Gemini 用 block+佔位符
-  const mode = opts.engine === 'google' || opts.engine === 'opencc' ? 'textnode' : 'placeholder';
-  const { texts, reassemble } = segmentHtml(entry.contentHtml || '', { mode });
+  // OpenCC 是逐字元映射(不動 ASCII/tag),整份 HTML 直轉——涵蓋 code/alt 屬性/JSON-LD,
+  // 對齊被取代的 opencc proxy(整份 XML 直轉)的行為;切段反而會漏掉 SKIP_TAGS 與屬性文字。
+  // Google 翻譯是純文字 MT,不吃 ⟦⟧ 佔位符 → 用 textnode 模式;Gemini 用 block+佔位符。
+  const mode = opts.engine === 'google' ? 'textnode' : 'placeholder';
+  const { texts, reassemble } = opts.engine === 'opencc'
+    ? { texts: entry.contentHtml ? [entry.contentHtml] : [], reassemble: (t) => t[0] ?? '' }
+    : segmentHtml(entry.contentHtml || '', { mode });
   const batch = hasTitle ? [title, ...texts] : texts;
 
   if (batch.length === 0) {
