@@ -49,13 +49,13 @@
 
 ```
 src/
-  engine.js            引擎封裝(去瀏覽器化 + 餵料 + 引擎分派)
-  engine-adapters/     browser-shim(Node 版 chrome.storage 相容層)
+  engine.js            引擎封裝（去瀏覽器化 + 餵料 + 引擎分派）
+  engine-adapters/     browser-shim（Node 版 chrome.storage 相容層）
   pipeline/            抓取 / 切段回填 / 單篇翻譯 / 編排 / RSS 輸出 / OPML
-  db/                  SQLite schema + DAO(settings/feeds/entries/usage/logs)+ 自動備份
-  web/                 Fastify server + public/(單頁分頁式介面)
-  server.js            進入點(開 DB、載 .env、排程、listen)
-vendor/shinkansen/     Shinkansen 引擎(git submodule)
+  db/                  SQLite schema + DAO（settings/feeds/entries/usage/logs）+ 自動備份
+  web/                 Fastify server + public/（單頁分頁式介面）
+  server.js            進入點（開 DB、載 .env、排程、listen）
+vendor/shinkansen/     Shinkansen 引擎（git submodule）
 test/                  vitest(233 tests)
 ```
 
@@ -66,7 +66,7 @@ test/                  vitest(233 tests)
 需求：Node 20+、git。
 
 ```bash
-# 1. 取得程式碼(含 submodule 引擎)
+# 1. 取得程式碼（含 submodule 引擎）
 git clone --recurse-submodules <repo-url> shinkansen-rss
 cd shinkansen-rss
 # 若已 clone 但沒帶 submodule:
@@ -75,8 +75,8 @@ git submodule update --init
 # 2. 安裝依賴
 npm install
 
-# 3. 基礎設定(可選)
-cp .env.example .env      # 設 PORT / 初始更新頻率 / 登入密碼(選填);金鑰在 web 介面填
+# 3. 基礎設定（可選）
+cp .env.example .env      # 設 PORT / 初始更新頻率 / 登入密碼（選填）；金鑰在 web 介面填
 
 # 4. 啟動
 npm start
@@ -88,7 +88,7 @@ npm start
 跑測試：
 
 ```bash
-npm test          # 233 tests;有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
+npm test          # 233 tests；有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
 ```
 
 ---
@@ -183,7 +183,7 @@ http://shinkansen-rss:8088/rss/<feedId>
 
 ```bash
 cp data/backups/shinkansen-feed-<日期>.sqlite  <備份位置>
-# 或停機複製主檔:
+# 或停機複製主檔：
 docker compose stop app
 cp data/shinkansen-feed.sqlite  <備份位置>
 docker compose start app
