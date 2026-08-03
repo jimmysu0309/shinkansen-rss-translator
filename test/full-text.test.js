@@ -129,6 +129,39 @@ describe('og:image hero 補圖', () => {
     const out = extractReadable(makePage({ og: null }), 'https://ex.com/a');
     expect(out).not.toContain('<figure>');
   });
+
+  // 2026-08-03 9to5Mac hero 重複回歸:og:image 走 Photon CDN(主機塞進 path)、
+  // 內文同圖走原站 → pathname 不同;且首圖 tag 帶超長 srcset,閉合 > 落在掃描窗外
+  it('Photon CDN og:image(i0.wp.com/原站/…)vs 原站內文同圖 → 不重複前置', () => {
+    const out = extractReadable(
+      makePage({
+        og: 'https://i0.wp.com/9to5mac.com/wp-content/uploads/hero.jpg?resize=1200%2C628&ssl=1',
+        bodyExtra: '<figure><img width="1600" src="https://9to5mac.com/wp-content/uploads/hero.jpg?w=1600"> 首圖說明文字</figure>',
+      }), 'https://9to5mac.com/a');
+    expect(out.match(/hero\.jpg/g).length).toBe(1);
+    expect(out.startsWith('<figure><img src="https://i0.wp.com')).toBe(false);
+  });
+
+  it('開頭 hero 圖帶超長 srcset(tag 超過掃描窗)→ 仍視為已有 hero,不前置', () => {
+    const srcset = Array.from({ length: 14 }, (_, i) =>
+      `https://cdn.ex.com/lead.jpg?w=${(i + 1) * 320}&quality=82&strip=all&ssl=1 ${(i + 1) * 320}w`).join(', ');
+    expect(srcset.length).toBeGreaterThan(600); // 前提:tag 一定超過 HERO_SCAN_CHARS
+    const out = extractReadable(
+      makePage({
+        og: 'https://cdn.ex.com/other-hero.jpg',
+        bodyExtra: `<figure><img width="1600" src="https://cdn.ex.com/lead.jpg" srcset="${srcset}"> 說明</figure>`,
+      }), 'https://ex.com/a');
+    expect(out).not.toContain('other-hero.jpg');
+  });
+
+  it('一般路徑段含點(/v1.2/…)不會被誤剝主機前綴', () => {
+    const out = extractReadable(
+      makePage({
+        og: 'https://cdn.ex.com/v1.2/hero.jpg',
+        bodyExtra: '<p><img src="https://cdn.ex.com/v1.2/hero.jpg?w=640"> 圖說湊長度文字文字</p>',
+      }), 'https://ex.com/a');
+    expect(out.match(/hero\.jpg/g).length).toBe(1); // 同圖仍要比對得到(不前置第二張)
+  });
 });
 
 // Readability 重複抽取去重(離線)。
@@ -155,6 +188,17 @@ describe('Readability 重複抽取去重', () => {
     expect(out.match(/lead\.jpg/g).length).toBe(1);
     expect(out.match(/這段導言重複了兩次/g).length).toBe(1);
     expect(out).not.toContain('跳至主要內容');
+  });
+
+  it('Photon CDN 版與原站版同圖(主機塞 path)→ 也去重', () => {
+    const page = `<!DOCTYPE html><html><body><article>
+      <figure><img src="https://i0.wp.com/ex.com/uploads/lead.jpg?w=376"></figure>
+      <figure><img src="https://ex.com/uploads/lead.jpg?w=750"></figure>
+      <p>正文第一段,內容夠長,readability 才會保留下來當作正文的一部分,不會被丟掉。</p>
+      <p>正文第二段也要夠長才會被保留下來,再多寫一點字數充版面確保抽得出正文喔。</p>
+    </article></body></html>`;
+    const out = extractReadable(page, 'https://ex.com/a');
+    expect(out.match(/lead\.jpg/g).length).toBe(1);
   });
 
   it('短句重複(<= 20 字)不動', () => {

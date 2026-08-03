@@ -55,13 +55,13 @@ export function extractReadable(html, url) {
  */
 function dedupeExtracted(content) {
   const { document } = parseHTML(`<!DOCTYPE html><html><body>${content}</body></html>`);
-  // 1. 重複圖(pathname 比對,忽略 CDN 參數)
+  // 1. 重複圖(正規化 pathname 比對,忽略 CDN 參數與圖片代理主機前綴)
   const seen = new Set();
   for (const img of [...document.querySelectorAll('img')]) {
     const src = img.getAttribute('src');
     if (!src) continue;
-    let path;
-    try { path = new URL(src).pathname; } catch { continue; }
+    const path = canonicalImagePath(src);
+    if (!path) continue;
     if (seen.has(path)) {
       let victim = img;
       const wrap = img.closest('figure, picture');
@@ -86,6 +86,17 @@ function dedupeExtracted(content) {
         p.textContent.trim() === a.textContent.trim()) p.remove();
   }
   return document.body.innerHTML;
+}
+
+// 圖片網址正規化(去重 / hero 比對共用):取 pathname,再剝掉「圖片代理 CDN 把來源主機
+// 塞進 path」的前綴 —— WordPress Photon 等:i0.wp.com/9to5mac.com/wp-content/… 與原站
+// 9to5mac.com/wp-content/… 是同一張圖,pathname 卻不同。第一段長得像主機名(含點、
+// 字母 TLD 結尾)才剝;一般版本號路徑段(/v1.2/…)不受影響。壞網址回 null(呼叫端跳過)。
+function canonicalImagePath(url) {
+  let path;
+  try { path = new URL(url).pathname; } catch { return null; }
+  const m = path.match(/^\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(\/.+)$/i);
+  return m ? m[1] : path;
 }
 
 // 讀頁面宣告的社群分享主圖(og:image 優先,twitter:image 備援),相對網址以文章網址解析
@@ -119,20 +130,20 @@ const HERO_MIN_WIDTH = 200;
  */
 function maybePrependHero(content, ogImage) {
   if (!ogImage) return content;
-  let heroPath;
-  try { heroPath = new URL(ogImage).pathname; } catch { return content; }
+  const heroPath = canonicalImagePath(ogImage);
+  if (!heroPath) return content;
   const { document } = parseHTML(`<!DOCTYPE html><html><body>${content}</body></html>`);
   for (const img of document.querySelectorAll('img')) {
     const src = img.getAttribute('src');
     if (!src) continue;
-    try {
-      if (new URL(src).pathname === heroPath) return content; // 正文已有同一張,不重複
-    } catch { /* 相對 / 壞網址不比對 */ }
+    if (canonicalImagePath(src) === heroPath) return content; // 正文已有同一張,不重複
   }
-  const head = content.slice(0, HERO_SCAN_CHARS);
-  const early = head.match(/<img[^>]*>/i);
-  if (early) {
-    const w = early[0].match(/width=["']?(\d+)/i);
+  // 掃描窗只界定 <img 的「起點」;tag 本體從起點往後配對到閉合 >。
+  // (9to5Mac 類長 srcset 的 img tag 可超過掃描窗,閉合落在窗外會誤判「開頭沒圖」)
+  const at = content.slice(0, HERO_SCAN_CHARS).search(/<img\b/i);
+  if (at !== -1) {
+    const tag = content.slice(at).match(/<img[^>]*>/i);
+    const w = tag && tag[0].match(/width=["']?(\d+)/i);
     if (!w || Number(w[1]) >= HERO_MIN_WIDTH) return content; // 開頭已有 hero 等級圖
   }
   return `<figure><img src="${escapeAttr(ogImage)}" alt=""></figure>` + content;
