@@ -132,23 +132,30 @@ select option[value=""] { color: var(--accent); }
 
 /* 用量工具列 + 日期範圍 */
 .usage-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-/* Log 頁時間範圍列:toolbar 內欄位一律 inline + 固定寬(蓋掉全域 input 的 block/100%) */
-.log-range { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--fg-dim); }
-.log-range input[type=date] {
-  display: inline-block; width: auto; margin-top: 0; padding: 6px 8px;
-  border: 1px solid var(--border); border-radius: var(--radius);
-  font: 13px var(--font); background: var(--card); color: var(--fg);
-}
-.log-range select { display: inline-block; width: 58px; margin-top: 0; padding: 6px 4px; }
-.log-range .colon { margin: 0 -2px; }
-.log-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.log-filters select { display: inline-block; width: auto; margin-top: 0; }
+/* Log 頁工具列:所有控制項統一 30px 高、13px 字,inline + 固定寬(蓋掉全域 input 的 block/100%)。
+   第一列(時間範圍)單列不換行;第二列 = 快捷/搜尋/過濾 | 匯出/清除。 */
+.log-range { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; font-size: 13px; color: var(--fg-dim); }
+.log-range input[type=date],
+.log-range select,
+.log-filters select,
 .log-filters input[type=search] {
-  display: inline-block; width: 220px; margin-top: 0; padding: 6px 10px;
+  display: inline-block; height: 30px; margin-top: 0; padding: 0 8px; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: var(--radius);
   font: 13px var(--font); background: var(--card); color: var(--fg);
 }
+.log-range input[type=date] { width: 128px; }
+.log-range select { width: 54px; padding: 0 4px; }
+.log-range .colon { margin: 0 -2px; }
+.log-range .ghost { height: 30px; padding: 0 12px; }
+.log-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.log-filters select { width: auto; }
+.log-filters input[type=search] { width: 180px; }
 .log-filters input[type=search]:focus { outline: none; border-color: var(--accent); }
+/* 第二列右側動作鈕與左側控制項同高 */
+#tab-logs .toolbar-actions .ghost, #tab-logs .toolbar-actions .danger { height: 30px; padding: 0 12px; }
+/* 快捷鈕群總高對齊 30px(外框 padding 3 + 內鈕 22) */
+#log-quick { padding: 3px; }
+#log-quick .range { padding: 2px 12px; }
 .toolbar-actions { display: inline-flex; gap: 6px; align-items: center; }
 .range-tabs { display: inline-flex; gap: 2px; background: var(--card); border: 1px solid var(--border-soft); border-radius: 8px; padding: 3px; }
 .range-tabs .range {
