@@ -378,26 +378,30 @@ function makeLogsDao(db) {
         detail: detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)),
       });
     },
-    /** 查詢:可依 level / category 過濾,新到舊,支援分頁 */
-    query({ from = 0, to = Number.MAX_SAFE_INTEGER, level = null, category = null, limit = 50, offset = 0 } = {}) {
+    /** 查詢:可依 level / category / 關鍵字(訊息、細節、feed 標題)過濾,新到舊,支援分頁 */
+    query({ from = 0, to = Number.MAX_SAFE_INTEGER, level = null, category = null, q = null, limit = 50, offset = 0 } = {}) {
       // 加 l. 前綴:JOIN feeds 後欄位可能撞名,一律鎖定 logs 表
       const where = ['l.ts >= @from', 'l.ts < @to'];
       const params = { from, to, limit, offset };
       if (level) { where.push('l.level = @level'); params.level = level; }
       if (category) { where.push('l.category = @category'); params.category = category; }
+      if (q) { where.push('(l.message LIKE @q OR l.detail LIKE @q OR f.title LIKE @q)'); params.q = `%${q}%`; }
       return db.prepare(
         `SELECT l.*, f.title AS feed_title FROM logs l
          LEFT JOIN feeds f ON f.id = l.feed_id
          WHERE ${where.join(' AND ')} ORDER BY l.ts DESC LIMIT @limit OFFSET @offset`,
       ).all(params);
     },
-    /** 符合過濾條件的總筆數(分頁用) */
-    count({ from = 0, to = Number.MAX_SAFE_INTEGER, level = null, category = null } = {}) {
-      const where = ['ts >= @from', 'ts < @to'];
+    /** 符合過濾條件的總筆數(分頁用);條件必須與 query 同步,否則頁數會對不上 */
+    count({ from = 0, to = Number.MAX_SAFE_INTEGER, level = null, category = null, q = null } = {}) {
+      const where = ['l.ts >= @from', 'l.ts < @to'];
       const params = { from, to };
-      if (level) { where.push('level = @level'); params.level = level; }
-      if (category) { where.push('category = @category'); params.category = category; }
-      return db.prepare(`SELECT COUNT(*) n FROM logs WHERE ${where.join(' AND ')}`).get(params).n;
+      if (level) { where.push('l.level = @level'); params.level = level; }
+      if (category) { where.push('l.category = @category'); params.category = category; }
+      if (q) { where.push('(l.message LIKE @q OR l.detail LIKE @q OR f.title LIKE @q)'); params.q = `%${q}%`; }
+      return db.prepare(
+        `SELECT COUNT(*) n FROM logs l LEFT JOIN feeds f ON f.id = l.feed_id WHERE ${where.join(' AND ')}`,
+      ).get(params).n;
     },
     /** 刪除早於指定時間的 log(保留天數用);回傳刪除筆數 */
     pruneBefore(ts) {

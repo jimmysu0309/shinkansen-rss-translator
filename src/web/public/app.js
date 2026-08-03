@@ -554,14 +554,69 @@ $('#clear-usage').addEventListener('click', async () => {
 
 // ─── 紀錄(Log)───
 let logFiltersReady = false;
+
+// 時間範圍控制:從/到(日期 + 時 + 分)。讀值:日期空 = 不設界
+function readLogRange() {
+  const at = (d, h, m, fallback) => {
+    const dv = $(d).value;
+    if (!dv) return null;
+    const t = new Date(`${dv}T${String($(h).value).padStart(2, '0')}:${String($(m).value).padStart(2, '0')}:${fallback}`).getTime();
+    return Number.isNaN(t) ? null : t;
+  };
+  return {
+    from: at('#lr-from-d', '#lr-from-h', '#lr-from-m', '00'),
+    to: at('#lr-to-d', '#lr-to-h', '#lr-to-m', '59'), // 「到」含該分鐘整分
+  };
+}
+
+function writeLogRange(fromMs, toMs) {
+  const put = (ms, d, h, m) => {
+    if (ms == null) { $(d).value = ''; $(h).value = '0'; $(m).value = '0'; return; }
+    const dt = new Date(ms);
+    $(d).value = dt.toLocaleDateString('sv');
+    $(h).value = String(dt.getHours());
+    $(m).value = String(dt.getMinutes());
+  };
+  put(fromMs, '#lr-from-d', '#lr-from-h', '#lr-from-m');
+  put(toMs, '#lr-to-d', '#lr-to-h', '#lr-to-m');
+}
+
 function initLogFilters() {
   if (logFiltersReady) return;
   const lvl = $('#log-level'), cat = $('#log-category');
   DEFAULTS.logLevels.forEach(l => lvl.add(new Option(l, l)));
   DEFAULTS.logCategories.forEach(c => cat.add(new Option(c, c)));
+  // 時/分下拉(00–23 / 00–59)
+  for (const [sel, n] of [['#lr-from-h', 24], ['#lr-from-m', 60], ['#lr-to-h', 24], ['#lr-to-m', 60]]) {
+    for (let i = 0; i < n; i++) $(sel).add(new Option(String(i).padStart(2, '0'), String(i)));
+  }
   const reload = () => { logPage = 0; loadLogs(); };
+  const clearQuick = () => $$('#log-quick .range').forEach(b => b.classList.remove('active'));
   lvl.addEventListener('change', reload);
   cat.addEventListener('change', reload);
+  // 手動改任一時間欄位 → 快捷鈕取消高亮 + 重載
+  for (const id of ['#lr-from-d', '#lr-from-h', '#lr-from-m', '#lr-to-d', '#lr-to-h', '#lr-to-m']) {
+    $(id).addEventListener('change', () => { clearQuick(); reload(); });
+  }
+  // 快捷:日/週/月 = 現在往回推;全部 = 清空範圍
+  $('#log-quick').addEventListener('click', (e) => {
+    const b = e.target.closest('.range'); if (!b) return;
+    clearQuick(); b.classList.add('active');
+    const days = Number(b.dataset.days);
+    const now = Date.now();
+    writeLogRange(days ? now - days * 86400_000 : null, days ? now : null);
+    reload();
+  });
+  // 現在時間:「到」設為此刻
+  $('#lr-now').addEventListener('click', () => {
+    const { from } = readLogRange();
+    clearQuick();
+    writeLogRange(from, Date.now());
+    reload();
+  });
+  // 搜尋:防抖 300ms
+  let qTimer;
+  $('#log-q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(reload, 300); });
   $('#log-pager').addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b || b.disabled) return;
     logPage += Number(b.dataset.dir); loadLogs();
@@ -569,9 +624,14 @@ function initLogFilters() {
   logFiltersReady = true;
 }
 
-// 過濾條件(給匯出用,不含分頁)
+// 過濾條件(範圍 + 搜尋 + 等級/類別;給載入與匯出共用,不含分頁)
 function logQuery() {
   const p = new URLSearchParams();
+  const { from, to } = readLogRange();
+  if (from != null) p.set('from', from);
+  if (to != null) p.set('to', to);
+  const q = $('#log-q').value.trim();
+  if (q) p.set('q', q);
   const lvl = $('#log-level').value, cat = $('#log-category').value;
   if (lvl) p.set('level', lvl);
   if (cat) p.set('category', cat);
@@ -580,10 +640,7 @@ function logQuery() {
 
 let logPage = 0;
 async function loadLogs() {
-  const p = new URLSearchParams();
-  const lvl = $('#log-level').value, cat = $('#log-category').value;
-  if (lvl) p.set('level', lvl);
-  if (cat) p.set('category', cat);
+  const p = new URLSearchParams(logQuery().slice(1));
   p.set('limit', PAGE_SIZE); p.set('offset', logPage * PAGE_SIZE);
   const { logs, total } = await api('GET', '/api/logs?' + p.toString());
   $('#log-table tbody').innerHTML = logs.length

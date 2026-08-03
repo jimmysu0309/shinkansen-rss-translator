@@ -500,11 +500,12 @@ export function buildServer(ctx, opts = {}) {
     const { from, to } = usageRange(req.query);
     const level = req.query.level || null;
     const category = req.query.category || null;
+    const q = (req.query.q || '').trim() || null;
     const limit = Math.min(Number(req.query.limit) || 50, 500);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
     return {
-      logs: ctx.logs.query({ from, to, level, category, limit, offset }),
-      total: ctx.logs.count({ from, to, level, category }),
+      logs: ctx.logs.query({ from, to, level, category, q, limit, offset }),
+      total: ctx.logs.count({ from, to, level, category, q }),
     };
   });
 
@@ -512,7 +513,8 @@ export function buildServer(ctx, opts = {}) {
     const { from, to } = usageRange(req.query);
     const level = req.query.level || null;
     const category = req.query.category || null;
-    const rows = ctx.logs.query({ from, to, level, category, limit: 100000 });
+    const q = (req.query.q || '').trim() || null;
+    const rows = ctx.logs.query({ from, to, level, category, q, limit: 100000 });
     const header = '時間,等級,類別,訊息,來源feed,細節';
     const lines = rows.map((r) => [
       new Date(r.ts).toISOString(), r.level, r.category, r.message, r.feed_title || '', r.detail || '',

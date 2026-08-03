@@ -52,6 +52,7 @@ function mockFetch(url) {
   if (u.endsWith('/api/defaults')) return json(DEFAULTS);
   if (u.endsWith('/api/backup/import')) return json({ settings: 1, feedsAdded: 2, feedsUpdated: 0, feedsSkipped: 0 });
   if (u.endsWith('/api/settings')) return json({});
+  if (u.includes('/api/logs')) return json({ logs: [], total: 0 });
   if (u.endsWith('/api/feeds/2/errors')) return json(FEED2_ERRORS);
   if (u.includes('/api/entries/') && u.endsWith('/dismiss-error')) return json({ ok: true });
   if (u.endsWith('/api/feeds')) return json(FEEDS);
@@ -152,6 +153,52 @@ describe('前端:失敗 badge 展開失敗原因', () => {
   it('沒失敗的 feed 不渲染失敗 badge', () => {
     const card1 = document.querySelector('#feed-list .feed-item[data-id="1"]');
     expect(card1.querySelector('[data-act="errors"]')).toBeNull();
+  });
+});
+
+describe('前端:Log 頁時間範圍與搜尋', () => {
+  beforeEach(boot);
+
+  const logCalls = () => global.fetch.mock.calls.map(c => String(c[0])).filter(u => u.includes('/api/logs?'));
+
+  it('點「週」快捷 → 帶 from/to(約 7 天範圍);「全部」→ 不帶 from/to', async () => {
+    document.querySelector('.tab[data-tab="logs"]').click();
+    await new Promise(r => setTimeout(r, 30));
+
+    document.querySelector('#log-quick [data-days="7"]').click();
+    await new Promise(r => setTimeout(r, 30));
+    const u = new URL('http://x' + logCalls().at(-1));
+    const from = Number(u.searchParams.get('from')), to = Number(u.searchParams.get('to'));
+    expect(from).toBeGreaterThan(0);
+    const span = to - from;
+    expect(span).toBeGreaterThan(6.9 * 86400_000);
+    expect(span).toBeLessThan(7.1 * 86400_000);
+    expect(document.querySelector('#log-quick [data-days="7"]').classList.contains('active')).toBe(true);
+
+    document.querySelector('#log-quick [data-days="0"]').click();
+    await new Promise(r => setTimeout(r, 30));
+    const u2 = new URL('http://x' + logCalls().at(-1));
+    expect(u2.searchParams.get('from')).toBeNull();
+    expect(u2.searchParams.get('to')).toBeNull();
+  });
+
+  it('搜尋框輸入(防抖後)→ 帶 q 參數;手動改時間欄取消快捷高亮', async () => {
+    document.querySelector('.tab[data-tab="logs"]').click();
+    await new Promise(r => setTimeout(r, 30));
+
+    const q = document.querySelector('#log-q');
+    q.value = 'Fireball';
+    q.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 380)); // 防抖 300ms
+    expect(new URL('http://x' + logCalls().at(-1)).searchParams.get('q')).toBe('Fireball');
+
+    document.querySelector('#log-quick [data-days="1"]').click();
+    await new Promise(r => setTimeout(r, 20));
+    const fromD = document.querySelector('#lr-from-d');
+    expect(fromD.value).not.toBe('');
+    fromD.dispatchEvent(new window.Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 20));
+    expect(document.querySelector('#log-quick .range.active')).toBeNull();
   });
 });
 

@@ -345,6 +345,18 @@ describe('Log API', () => {
     await app.inject({ method: 'POST', url: `/api/feeds/${f.id}/refresh` }); // 產生 fetch + translate log
   });
 
+  it('GET /api/logs?q= 關鍵字過濾訊息,total 同步', async () => {
+    const all = (await app.inject({ method: 'GET', url: '/api/logs' })).json();
+    const r = (await app.inject({ method: 'GET', url: `/api/logs?q=${encodeURIComponent('已翻譯')}` })).json();
+    expect(r.logs.length).toBeGreaterThanOrEqual(1);
+    expect(r.logs.length).toBeLessThan(all.logs.length); // 有真的過濾掉東西
+    for (const l of r.logs) expect(l.message).toContain('已翻譯');
+    expect(r.total).toBe(r.logs.length);
+    const none = (await app.inject({ method: 'GET', url: '/api/logs?q=絕不存在的關鍵字xyz' })).json();
+    expect(none.logs).toHaveLength(0);
+    expect(none.total).toBe(0);
+  });
+
   it('GET /api/logs 回紀錄(新到舊)+ total,分頁 offset 生效', async () => {
     const r = (await app.inject({ method: 'GET', url: '/api/logs' })).json();
     expect(r.logs.length).toBeGreaterThanOrEqual(2); // 至少 fetch + translate

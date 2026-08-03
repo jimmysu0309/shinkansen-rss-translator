@@ -351,6 +351,18 @@ describe('logs DAO', () => {
     expect(ctx.logs.query({ level: 'error', limit: 1, offset: 1 })).toHaveLength(1);
   });
 
+  it('關鍵字 q 過濾:訊息 / 細節 / feed 標題都搜得到,count 同步', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed', title: 'Daring Fireball' });
+    ctx.logs.append({ ts: 1, level: 'error', category: 'fetch', message: '抓取失敗:DF', feedId: f.id, detail: 'Unclosed root tag' });
+    ctx.logs.append({ ts: 2, level: 'info', category: 'translate', message: '已翻譯:某文章' });
+    expect(ctx.logs.query({ q: '抓取失敗' })).toHaveLength(1);       // 訊息
+    expect(ctx.logs.query({ q: 'Unclosed' })).toHaveLength(1);       // 細節
+    expect(ctx.logs.query({ q: 'Fireball' })).toHaveLength(1);       // feed 標題
+    expect(ctx.logs.query({ q: '找不到的字' })).toHaveLength(0);
+    expect(ctx.logs.count({ q: 'Fireball' })).toBe(1);
+    expect(ctx.logs.query({ q: 'Fireball', level: 'info' })).toHaveLength(0); // 與其他條件可疊加
+  });
+
   it('detail 物件會序列化;join feed 標題', () => {
     const f = ctx.feeds.create({ source_url: 'https://ex.com/feed', title: '來源A' });
     ctx.logs.append({ ts: 1, level: 'info', category: 'translate', message: 'x', feedId: f.id, detail: { tokens: 100 } });

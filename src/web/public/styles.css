@@ -132,6 +132,23 @@ select option[value=""] { color: var(--accent); }
 
 /* 用量工具列 + 日期範圍 */
 .usage-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+/* Log 頁時間範圍列:toolbar 內欄位一律 inline + 固定寬(蓋掉全域 input 的 block/100%) */
+.log-range { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--fg-dim); }
+.log-range input[type=date] {
+  display: inline-block; width: auto; margin-top: 0; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font: 13px var(--font); background: var(--card); color: var(--fg);
+}
+.log-range select { display: inline-block; width: 58px; margin-top: 0; padding: 6px 4px; }
+.log-range .colon { margin: 0 -2px; }
+.log-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.log-filters select { display: inline-block; width: auto; margin-top: 0; }
+.log-filters input[type=search] {
+  display: inline-block; width: 220px; margin-top: 0; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font: 13px var(--font); background: var(--card); color: var(--fg);
+}
+.log-filters input[type=search]:focus { outline: none; border-color: var(--accent); }
 .toolbar-actions { display: inline-flex; gap: 6px; align-items: center; }
 .range-tabs { display: inline-flex; gap: 2px; background: var(--card); border: 1px solid var(--border-soft); border-radius: 8px; padding: 3px; }
 .range-tabs .range {
@@ -163,10 +180,6 @@ select option[value=""] { color: var(--accent); }
 .table-scroll { overflow-x: auto; }
 .table-scroll table { min-width: 480px; }
 td.msg { text-align: left; max-width: 340px; }
-
-/* Log filters */
-.log-filters { display: inline-flex; gap: 8px; }
-.log-filters select { margin: 0; width: auto; }
 
 /* log 等級標記 */
 .lvl { padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 500; }
