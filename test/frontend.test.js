@@ -27,7 +27,14 @@ const DEFAULTS = {
   modelPricing: { 'gemini-3.1-flash-lite': { inputPerMTok: 0.25, outputPerMTok: 1.5 } }, hasApiKey: true,
 };
 // counts 由伺服器列表附上(前端不再逐 feed 撈詳情)
-const FEEDS = [{ id: 1, title: 'take.surf', source_url: 'https://take.surf/feed.atom', engine: 'gemini', model: 'gemini-3.1-flash-lite', enabled: 1, fetch_article: 0, counts: { done: 1, pending: 0, error: 0 } }];
+const FEEDS = [
+  { id: 1, title: 'take.surf', source_url: 'https://take.surf/feed.atom', engine: 'gemini', model: 'gemini-3.1-flash-lite', enabled: 1, fetch_article: 0, counts: { done: 1, pending: 0, error: 0 } },
+  { id: 2, title: 'err.feed', source_url: 'https://err.example/feed', engine: 'gemini', model: null, enabled: 1, fetch_article: 0, counts: { done: 3, pending: 0, error: 2 } },
+];
+const FEED2_ERRORS = [
+  { id: 9, title: '壞文章', url: 'https://err.example/a1', translation_error: 'Gemini API 500: internal error' },
+  { id: 10, title: null, url: null, translation_error: '譯文段數不符' },
+];
 
 const USAGE = {
   total: { cost: 0.07, calls: 25, input_tokens: 400, output_tokens: 130, cached_tokens: 0, cacheHitRate: 0 },
@@ -45,6 +52,7 @@ function mockFetch(url) {
   if (u.endsWith('/api/defaults')) return json(DEFAULTS);
   if (u.endsWith('/api/backup/import')) return json({ settings: 1, feedsAdded: 2, feedsUpdated: 0, feedsSkipped: 0 });
   if (u.endsWith('/api/settings')) return json({});
+  if (u.endsWith('/api/feeds/2/errors')) return json(FEED2_ERRORS);
   if (u.endsWith('/api/feeds')) return json(FEEDS);
   if (u.includes('/api/usage/records')) return json({ records: [], total: 0 });
   if (u.includes('/api/usage')) return json(USAGE);
@@ -88,6 +96,36 @@ describe('前端:feed 卡片狀態徽章', () => {
     // 只打了一次 /api/feeds,沒有 /api/feeds/1 詳情請求
     const calls = global.fetch.mock.calls.map(c => String(c[0]));
     expect(calls.some(u => /\/api\/feeds\/1$/.test(u))).toBe(false);
+  });
+});
+
+describe('前端:失敗 badge 展開失敗原因', () => {
+  beforeEach(boot);
+
+  it('點「N 失敗」→ 撈 /errors 顯示標題與錯誤;再點一次收合', async () => {
+    const card = document.querySelector('#feed-list .feed-item[data-id="2"]');
+    const badge = card.querySelector('button.badge.error[data-act="errors"]');
+    expect(badge.textContent).toContain('2 失敗');
+    const panel = card.querySelector('.feed-errors');
+    expect(panel.hidden).toBe(true);
+
+    badge.click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(panel.hidden).toBe(false);
+    expect(panel.textContent).toContain('壞文章');
+    expect(panel.textContent).toContain('Gemini API 500: internal error');
+    expect(panel.textContent).toContain('(無標題)');
+    expect(panel.textContent).toContain('譯文段數不符');
+    expect(panel.querySelector('a').href).toBe('https://err.example/a1');
+
+    badge.click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(panel.hidden).toBe(true);
+  });
+
+  it('沒失敗的 feed 不渲染失敗 badge', () => {
+    const card1 = document.querySelector('#feed-list .feed-item[data-id="1"]');
+    expect(card1.querySelector('[data-act="errors"]')).toBeNull();
   });
 });
 

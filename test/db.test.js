@@ -95,6 +95,17 @@ describe('feeds DAO', () => {
     expect(u.last_checked_at).toBe(5000);
   });
 
+  it('listErrorsByFeed 只回失敗文章,附錯誤訊息', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
+    const { entry: a } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1', title: 'A', url: 'https://ex.com/1' });
+    ctx.entries.upsertNew({ feed_id: f.id, guid: 'g2', title: 'B' });
+    ctx.entries.markError(a.id, 'boom');
+    const errs = ctx.entries.listErrorsByFeed(f.id);
+    expect(errs).toHaveLength(1);
+    expect(errs[0].title).toBe('A');
+    expect(errs[0].translation_error).toBe('boom');
+  });
+
   it('remove 刪除 feed 並連帶刪 entries(CASCADE)', () => {
     const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
     ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1' });

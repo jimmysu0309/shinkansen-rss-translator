@@ -451,6 +451,20 @@ describe('引擎欄位', () => {
     expect(d.engines.map(e => e.id)).toContain('gemini');
     expect(d.engines.map(e => e.id)).toContain('opencc');
   });
+  it('GET /api/feeds/:id/errors 回失敗文章與錯誤訊息;不存在的 feed 404', async () => {
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/err' } })).json();
+    const { entry } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1', title: '壞文章', url: 'https://ex.com/a1' });
+    ctx.entries.upsertNew({ feed_id: f.id, guid: 'g2', title: '好文章' });
+    ctx.entries.markError(entry.id, new Error('Gemini API 500'));
+    const r = await app.inject({ method: 'GET', url: `/api/feeds/${f.id}/errors` });
+    expect(r.statusCode).toBe(200);
+    const errs = r.json();
+    expect(errs).toHaveLength(1);
+    expect(errs[0].title).toBe('壞文章');
+    expect(errs[0].translation_error).toContain('Gemini API 500');
+    expect((await app.inject({ method: 'GET', url: '/api/feeds/9999/errors' })).statusCode).toBe(404);
+  });
+
   it('PATCH source_url:可改、驗格式 400、撞其他 feed 409、同值自身通過', async () => {
     const a = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://a.com/f' } })).json();
     const b = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://b.com/f' } })).json();

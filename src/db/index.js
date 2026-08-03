@@ -232,6 +232,14 @@ function makeEntriesDao(db) {
       return byId.get(id);
     },
     markError(id, err) { markError.run({ id, err: String(err).slice(0, 500) }); return byId.get(id); },
+    /** 翻譯失敗的文章清單(給前端「N 失敗」badge 展開失敗原因用) */
+    listErrorsByFeed(feedId) {
+      return db.prepare(`
+        SELECT id, title, url, translation_error FROM entries
+        WHERE feed_id = ? AND translation_status = 'error'
+        ORDER BY published_at DESC, id DESC
+      `).all(feedId);
+    },
     /** 更新原文 HTML(供 fetch_article 抓到全文後覆蓋摘要) */
     updateContent(id, html) {
       db.prepare('UPDATE entries SET content_html = ? WHERE id = ?').run(html, id);

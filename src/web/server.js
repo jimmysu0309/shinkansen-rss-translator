@@ -370,6 +370,13 @@ export function buildServer(ctx, opts = {}) {
     return result;
   });
 
+  // 失敗清單:此 feed 翻譯失敗的文章與各自的錯誤訊息(前端點「N 失敗」badge 查看)
+  app.get('/api/feeds/:id/errors', async (req, reply) => {
+    const feed = ctx.feeds.get(Number(req.params.id));
+    if (!feed) return reply.code(404).send({ error: 'feed 不存在' });
+    return ctx.entries.listErrorsByFeed(feed.id);
+  });
+
   // 重翻:把此 feed 翻譯失敗(error)的文章重設為 pending 再翻一次
   app.post('/api/feeds/:id/retry-errors', async (req, reply) => {
     const feed = ctx.feeds.get(Number(req.params.id));

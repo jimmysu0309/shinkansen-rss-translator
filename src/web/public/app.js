@@ -198,7 +198,7 @@ function statusBadges(counts) {
   const parts = [];
   if (counts.done) parts.push(`<span class="badge done">✓ ${counts.done} 已翻</span>`);
   if (counts.pending) parts.push(`<span class="badge pending">${counts.pending} 待翻</span>`);
-  if (counts.error) parts.push(`<span class="badge error">${counts.error} 失敗</span>`);
+  if (counts.error) parts.push(`<button class="badge error" data-act="errors" title="點擊查看失敗原因">${counts.error} 失敗</button>`);
   return parts.join('') || '<span class="badge">尚無文章</span>';
 }
 
@@ -245,6 +245,8 @@ async function loadFeeds() {
         ${f.last_error ? `<span class="badge error">抓取錯誤</span>` : ''}
       </div>
 
+      <div class="feed-errors" hidden></div>
+
       <div class="feed-edit" hidden>
         <div class="grid2">
           <label class="span2">來源網址<input type="url" data-f="source_url" value="${esc(f.source_url || '')}"></label>
@@ -284,6 +286,17 @@ $('#feed-list').addEventListener('click', async (e) => {
       const r = await api('POST', `/api/feeds/${id}/refresh`);
       toast(`新增 ${r.added} 篇、翻譯 ${r.translated} 篇${r.failed ? `、失敗 ${r.failed}` : ''}`);
       loadFeeds();
+    } else if (act === 'errors') {
+      const box = $('.feed-errors', item);
+      if (!box.hidden) { box.hidden = true; return; } // 再點一次收合
+      const errs = await api('GET', `/api/feeds/${id}/errors`);
+      box.innerHTML = errs.length
+        ? errs.map((en) => `<div class="err-item">${
+            en.url ? `<a href="${esc(en.url)}" target="_blank" rel="noopener">${esc(en.title || '(無標題)')}</a>`
+                   : `<span>${esc(en.title || '(無標題)')}</span>`
+          }<div class="err-msg">${esc(en.translation_error || '(無錯誤訊息)')}</div></div>`).join('')
+        : '<div class="err-msg">目前沒有失敗的文章（可能剛重翻成功，重新整理即可）</div>';
+      box.hidden = false;
     } else if (act === 'retry') {
       btn.textContent = '重翻中…'; btn.disabled = true;
       const r = await api('POST', `/api/feeds/${id}/retry-errors`);

@@ -182,9 +182,16 @@ td .time { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(-
 .feed-url { color: var(--fg-dim); font-size: 11px; word-break: break-all; font-family: ui-monospace, Menlo, monospace; }
 .feed-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; font-size: 12px; color: var(--fg-dim); }
 .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--bg); }
+/* 「N 失敗」badge 是可點按鈕(展開失敗原因):重置 button 預設樣式 + 雙通道提示(色 + 底線) */
+button.badge { border: 0; font: inherit; font-size: 11px; }
+button.badge.error { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .badge.done { color: var(--ok); }
 .badge.pending { color: var(--accent); }
 .badge.error { color: var(--danger); }
+.feed-errors { margin: 10px 0; padding: 12px; background: var(--bg); border-radius: 8px; }
+.feed-errors .err-item + .err-item { margin-top: 10px; }
+.feed-errors a { font-size: 13px; }
+.feed-errors .err-msg { font-size: 12px; color: var(--fg-dim); font-family: ui-monospace, SFMono-Regular, monospace; margin-top: 2px; word-break: break-all; }
 .feed-edit { margin: 10px 0; padding: 12px; background: var(--bg); border-radius: 8px; }
 .feed-edit .grid2 { gap: 8px 12px; }
 .feed-edit label { font-size: 12px; color: var(--fg-dim); }
