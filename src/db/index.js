@@ -90,7 +90,7 @@ function makeFeedsDao(db) {
     WHERE id = @id
   `);
 
-  const FIELDS = ['title', 'enabled', 'engine', 'model', 'service_tier',
+  const FIELDS = ['source_url', 'title', 'enabled', 'engine', 'model', 'service_tier',
     'fetch_article', 'target_language', 'system_prompt'];
 
   return {
@@ -129,6 +129,10 @@ function makeFeedsDao(db) {
           sets.push(`${f} = @${f}`);
           params[f] = v ?? null;
         }
+      }
+      // 換來源網址 → 清 conditional GET 快取,避免對新網址送舊 etag/last-modified 拿到錯誤 304
+      if ('source_url' in patch && patch.source_url !== cur.source_url) {
+        sets.push('etag = NULL', 'last_modified = NULL');
       }
       if (sets.length) db.prepare(`UPDATE feeds SET ${sets.join(', ')} WHERE id = @id`).run(params);
       return byId.get(id);

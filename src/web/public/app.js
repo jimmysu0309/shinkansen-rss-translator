@@ -247,6 +247,7 @@ async function loadFeeds() {
 
       <div class="feed-edit" hidden>
         <div class="grid2">
+          <label class="span2">來源網址<input type="url" data-f="source_url" value="${esc(f.source_url || '')}"></label>
           <label>標題<input type="text" data-f="title" value="${esc(f.title || '')}"></label>
           <label>引擎<select data-f="engine">${DEFAULTS.engines.map(o => `<option value="${esc(o.id)}"${o.id === (f.engine || 'gemini') ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>
           <label>Gemini 模型<select data-f="model">${optionsHtml(DEFAULTS.models, f.model)}</select></label>
@@ -307,6 +308,7 @@ $('#feed-list').addEventListener('click', async (e) => {
       const box = $('.feed-edit', item);
       const val = (sel) => $(`[data-f="${sel}"]`, box);
       const patch = {
+        source_url: val('source_url').value.trim(),
         title: val('title').value.trim() || null,
         engine: val('engine').value,          // engine 一律具體值(NOT NULL)
         model: val('model').value || null,    // model 可為 null = 繼承全域

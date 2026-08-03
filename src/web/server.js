@@ -288,7 +288,18 @@ export function buildServer(ctx, opts = {}) {
     return reply.code(201).send(ctx.feeds.create(body));
   });
   app.patch('/api/feeds/:id', async (req, reply) => {
-    const f = ctx.feeds.update(Number(req.params.id), req.body || {});
+    const body = req.body || {};
+    // source_url 可編輯,但比照 POST 驗證:http(s) + 不得撞其他 feed(UNIQUE 約束的前置友善檢查)
+    if ('source_url' in body) {
+      if (!body.source_url || !isHttpUrl(body.source_url)) {
+        return reply.code(400).send({ error: 'source_url 必須是 http(s) 網址' });
+      }
+      const dup = ctx.feeds.getByUrl(body.source_url);
+      if (dup && dup.id !== Number(req.params.id)) {
+        return reply.code(409).send({ error: '此 feed 網址已被其他 feed 使用' });
+      }
+    }
+    const f = ctx.feeds.update(Number(req.params.id), body);
     if (!f) return reply.code(404).send({ error: 'feed 不存在' });
     return f;
   });

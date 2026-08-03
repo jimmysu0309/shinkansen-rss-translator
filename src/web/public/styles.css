@@ -59,6 +59,7 @@ textarea { resize: vertical; line-height: 1.6; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.grid2 .span2 { grid-column: 1 / -1; }
 .row { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 12px; }
 .row:last-child { margin-bottom: 0; }
 .row .grow, label.grow { flex: 1; }

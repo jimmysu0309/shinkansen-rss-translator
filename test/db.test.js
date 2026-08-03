@@ -71,6 +71,23 @@ describe('feeds DAO', () => {
     expect(ctx.feeds.list({ enabledOnly: true }).length).toBe(1);
   });
 
+  it('update source_url 可改網址,且連帶清 etag/last_modified(避免對新網址送舊快取)', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
+    ctx.feeds.setFetchMeta(f.id, { etag: 'W/"abc"', lastModified: 'Mon, 01 Jan 2026' });
+    const u = ctx.feeds.update(f.id, { source_url: 'https://new.com/feed' });
+    expect(u.source_url).toBe('https://new.com/feed');
+    expect(u.etag).toBeNull();
+    expect(u.last_modified).toBeNull();
+  });
+
+  it('update source_url 值未變 → etag 保留', () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
+    ctx.feeds.setFetchMeta(f.id, { etag: 'W/"abc"' });
+    const u = ctx.feeds.update(f.id, { source_url: 'https://ex.com/feed', title: 'T' });
+    expect(u.etag).toBe('W/"abc"');
+    expect(u.title).toBe('T');
+  });
+
   it('setFetchMeta 更新 etag / 錯誤', () => {
     const f = ctx.feeds.create({ source_url: 'https://ex.com/feed' });
     const u = ctx.feeds.setFetchMeta(f.id, { etag: 'W/"abc"', checkedAt: 5000 });

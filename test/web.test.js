@@ -451,6 +451,22 @@ describe('引擎欄位', () => {
     expect(d.engines.map(e => e.id)).toContain('gemini');
     expect(d.engines.map(e => e.id)).toContain('opencc');
   });
+  it('PATCH source_url:可改、驗格式 400、撞其他 feed 409、同值自身通過', async () => {
+    const a = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://a.com/f' } })).json();
+    const b = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://b.com/f' } })).json();
+    // 正常改網址
+    const ok = await app.inject({ method: 'PATCH', url: `/api/feeds/${a.id}`, payload: { source_url: 'https://a2.com/f' } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().source_url).toBe('https://a2.com/f');
+    // 非 http(s) → 400
+    expect((await app.inject({ method: 'PATCH', url: `/api/feeds/${a.id}`, payload: { source_url: 'ftp://x' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PATCH', url: `/api/feeds/${a.id}`, payload: { source_url: '' } })).statusCode).toBe(400);
+    // 撞其他 feed → 409
+    expect((await app.inject({ method: 'PATCH', url: `/api/feeds/${a.id}`, payload: { source_url: 'https://b.com/f' } })).statusCode).toBe(409);
+    // 同值送回自身 → 通過(不算撞)
+    expect((await app.inject({ method: 'PATCH', url: `/api/feeds/${b.id}`, payload: { source_url: 'https://b.com/f' } })).statusCode).toBe(200);
+  });
+
   it('無 API key 環境:opencc feed 可 refresh,gemini feed 被 400 擋', async () => {
     const ctx2 = createDb(':memory:');
     const app2 = buildServer(ctx2, { processDeps: fakeProcessDeps }); // 不給 apiKey
