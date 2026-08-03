@@ -34,6 +34,13 @@ export const DEFAULT_TARGET_LANGUAGE = 'zh-TW';
 export const DEFAULT_MAX_UNITS_PER_BATCH = 50;
 export const DEFAULT_MAX_CHARS_PER_BATCH = DEFAULT_CHARS_PER_BATCH;
 export const DEFAULT_TEMPERATURE = 1;
+// Gemini 單次請求逾時。vendor fetchWithRetry 預設 15s,對本專案的 feed 批次
+//(50 段/3500 字元 + gemini-3 thinking)不夠——長文電子報(如 Benedict's Newsletter)
+// 的批次在 lite/preview 都會超過 15s,四次重試全逾時、整篇卡死。
+// vendor 自家的文件翻譯路徑同樣用 geminiConfig.fetchTimeoutMs=120s 覆寫(見
+// vendor gemini.js fetchWithRetry 註解),這裡取 60s:足以涵蓋最長批次,又不至於
+// 讓真正掛掉的請求把翻譯循環拖太久(最壞 60s × 4 次重試)。
+export const DEFAULT_FETCH_TIMEOUT_MS = 60_000;
 
 // 支援的翻譯引擎(前端下拉用)
 export const ENGINES = [
@@ -65,6 +72,7 @@ const EMPTY_USAGE = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
  * @param {number} [opts.maxUnitsPerBatch]  每批段數上限
  * @param {number} [opts.maxCharsPerBatch]  每批字元上限
  * @param {number} [opts.maxRetries]        網路錯誤重試次數
+ * @param {number} [opts.fetchTimeoutMs]    單次 API 請求逾時(預設 DEFAULT_FETCH_TIMEOUT_MS)
  * @returns {object} settings(給 translateBatch)
  */
 export function buildGeminiSettings(opts = {}) {
@@ -79,6 +87,7 @@ export function buildGeminiSettings(opts = {}) {
       topK: opts.topK,
       maxOutputTokens: opts.maxOutputTokens ?? 8192,
       systemInstruction: opts.systemInstruction || DEFAULT_SYSTEM_PROMPT,
+      fetchTimeoutMs: opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
     },
     maxUnitsPerBatch: opts.maxUnitsPerBatch ?? DEFAULT_MAX_UNITS_PER_BATCH,
     maxCharsPerBatch: opts.maxCharsPerBatch ?? DEFAULT_MAX_CHARS_PER_BATCH,

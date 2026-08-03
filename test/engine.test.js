@@ -12,6 +12,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_FORBIDDEN_TERMS,
+  DEFAULT_FETCH_TIMEOUT_MS,
 } from '../src/engine.js';
 
 describe('buildGeminiSettings(離線)', () => {
@@ -43,6 +44,16 @@ describe('buildGeminiSettings(離線)', () => {
     expect(s.maxUnitsPerBatch).toBe(10);
     expect(s.geminiConfig.temperature).toBe(0.7);
     expect(s.geminiConfig.systemInstruction).toBe('custom');
+  });
+
+  it('單次請求逾時預設 60s 且可覆寫(vendor 預設 15s 對長批次不夠)', () => {
+    // 驗的是 settings 形狀:fetchTimeoutMs 必須進 geminiConfig,vendor fetchWithRetry
+    // 才吃得到;沒驗 vendor 實際套用逾時(那層屬 vendor,鐵律不改不測)。
+    const s = buildGeminiSettings({ apiKey: 'AQ.test' });
+    expect(s.geminiConfig.fetchTimeoutMs).toBe(DEFAULT_FETCH_TIMEOUT_MS);
+    expect(DEFAULT_FETCH_TIMEOUT_MS).toBe(60_000);
+    const custom = buildGeminiSettings({ apiKey: 'AQ.test', fetchTimeoutMs: 120_000 });
+    expect(custom.geminiConfig.fetchTimeoutMs).toBe(120_000);
   });
 
   it('預設禁用詞黑名單載入(台灣繁中核心)', () => {
