@@ -148,6 +148,15 @@ describe('entries DAO — 去重是核心', () => {
     expect(ctx.entries.getByGuid(feedId, 'g1').author).toBe('Emma Roth');
   });
 
+  it('image_url 隨插入存放;重抓時只補缺、不覆寫既有值', () => {
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'i1', title: 'A' });          // 舊條目沒封面
+    expect(ctx.entries.getByGuid(feedId, 'i1').image_url).toBe(null);
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'i1', image_url: 'https://cdn/x.jpg' });
+    expect(ctx.entries.getByGuid(feedId, 'i1').image_url).toBe('https://cdn/x.jpg');
+    ctx.entries.upsertNew({ feed_id: feedId, guid: 'i1', image_url: 'https://cdn/other.jpg' });
+    expect(ctx.entries.getByGuid(feedId, 'i1').image_url).toBe('https://cdn/x.jpg'); // 已有 → 不覆寫
+  });
+
   it('不同 feed 的相同 guid 各自獨立', () => {
     const feed2 = ctx.feeds.create({ source_url: 'https://ex2.com/feed' }).id;
     expect(ctx.entries.upsertNew({ feed_id: feedId, guid: 'same' }).inserted).toBe(true);

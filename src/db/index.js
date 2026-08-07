@@ -35,6 +35,9 @@ function migrate(db) {
   if (!entryCols.has('author')) {
     db.exec('ALTER TABLE entries ADD COLUMN author TEXT');
   }
+  if (!entryCols.has('image_url')) {
+    db.exec('ALTER TABLE entries ADD COLUMN image_url TEXT');
+  }
   // 分類功能已移除(分類交給 Miniflux 匯入時處理)—— 既有 DB 把欄位連值一起刪
   const feedCols = new Set(db.pragma('table_info(feeds)').map((c) => c.name));
   if (feedCols.has('category')) {
@@ -150,15 +153,20 @@ function makeEntriesDao(db) {
   // 去重核心:INSERT ... ON CONFLICT(feed_id, guid) DO NOTHING。
   // 回傳是否為「新插入」(changes>0),讓管線只翻新條目。
   const insertIgnore = db.prepare(`
-    INSERT INTO entries (feed_id, guid, url, title, author, content_html, published_at,
+    INSERT INTO entries (feed_id, guid, url, title, author, image_url, content_html, published_at,
                          translation_status, created_at)
-    VALUES (@feed_id, @guid, @url, @title, @author, @content_html, @published_at, 'pending', @created_at)
+    VALUES (@feed_id, @guid, @url, @title, @author, @image_url, @content_html, @published_at, 'pending', @created_at)
     ON CONFLICT(feed_id, guid) DO NOTHING
   `);
   // 舊條目補作者:author 欄是後來才加的,來源 feed 還列著的舊文章重抓時補值即可,不必重翻
   const backfillAuthor = db.prepare(`
     UPDATE entries SET author = @author
     WHERE feed_id = @feed_id AND guid = @guid AND (author IS NULL OR author = '')
+  `);
+  // 封面圖同理(2026-08-07 才加的欄位):hero 是輸出時才前置的,補值不影響譯文,不必重翻
+  const backfillImage = db.prepare(`
+    UPDATE entries SET image_url = @image_url
+    WHERE feed_id = @feed_id AND guid = @guid AND (image_url IS NULL OR image_url = '')
   `);
   const byId = db.prepare('SELECT * FROM entries WHERE id = ?');
   const byGuid = db.prepare('SELECT * FROM entries WHERE feed_id = ? AND guid = ?');
@@ -199,12 +207,16 @@ function makeEntriesDao(db) {
         url: entry.url ?? null,
         title: entry.title ?? null,
         author: entry.author ?? null,
+        image_url: entry.image_url ?? null,
         content_html: entry.content_html ?? null,
         published_at: entry.published_at ?? null,
         created_at: at,
       });
       if (info.changes === 0 && entry.author) {
         backfillAuthor.run({ feed_id: entry.feed_id, guid: entry.guid, author: entry.author });
+      }
+      if (info.changes === 0 && entry.image_url) {
+        backfillImage.run({ feed_id: entry.feed_id, guid: entry.guid, image_url: entry.image_url });
       }
       return { inserted: info.changes > 0, entry: byGuid.get(entry.feed_id, entry.guid) };
     },

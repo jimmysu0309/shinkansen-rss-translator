@@ -120,7 +120,7 @@ async function processFeedLocked(ctx, feed, deps) {
       if (!it.guid) continue; // 沒 guid 無法去重,跳過(避免每次重抓都重複)
       const { inserted } = ctx.entries.upsertNew({
         feed_id: feed.id, guid: it.guid, url: it.url, title: it.title, author: it.author,
-        content_html: it.contentHtml, published_at: it.published_at,
+        image_url: it.image_url, content_html: it.contentHtml, published_at: it.published_at,
       }, now());
       if (inserted) added++;
     }

@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS entries (
   title                  TEXT,
   author                 TEXT,     -- 原文作者名(不翻譯;輸出 feed 帶給 Miniflux → Readwise)
   title_translated       TEXT,
+  image_url              TEXT,     -- 上游 media:content / enclosure 的封面圖(內文外的那張;輸出時前置成 hero)
   content_html           TEXT,     -- 原文(可能經 readability 抽全文)
   content_translated     TEXT,     -- 譯文 HTML(保留結構與圖片)
   published_at           INTEGER,

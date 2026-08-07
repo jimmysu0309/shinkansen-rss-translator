@@ -15,8 +15,14 @@ import { APP_VERSION } from '../version.js';
 const MAX_XML_BYTES = 10 * 1024 * 1024;
 
 const parser = new Parser({
-  // 讓 content:encoded(全文)可取用
-  customFields: { item: [['content:encoded', 'contentEncoded']] },
+  // 讓 content:encoded(全文)與 Media RSS 的圖片欄位可取用
+  customFields: {
+    item: [
+      ['content:encoded', 'contentEncoded'],
+      ['media:content', 'mediaContent', { keepArray: true }],
+      ['media:thumbnail', 'mediaThumbnail', { keepArray: true }],
+    ],
+  },
 });
 
 function pickContentHtml(item) {
@@ -39,6 +45,36 @@ function pickAuthor(item) {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
+// 封面圖:很多來源(The Atlantic、多數 WordPress 站)把封面掛在文章本體「外面」的
+// media:content / media:thumbnail / enclosure,內文本身一張圖都沒有。不撈進來的話
+// 下游(Miniflux / Readwise)就是全篇無圖 —— 這是本欄位存在的唯一理由。
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i;
+
+function isImageUrl(url, type, medium) {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return false;
+  if (typeof medium === 'string' && medium.toLowerCase() === 'image') return true;
+  if (typeof type === 'string' && type.toLowerCase().startsWith('image/')) return true;
+  // 沒宣告型別的(Atlantic 的 media:content 就沒有)只能看副檔名
+  return !type && !medium ? IMAGE_EXT.test(url) : false;
+}
+
+function pickImage(item) {
+  // rss-parser 把未知標籤的屬性放進 `$`;keepArray 讓多張圖時拿得到全部(取第一張)。
+  const candidates = [];
+  if (item.enclosure) candidates.push(item.enclosure);
+  for (const key of ['mediaContent', 'mediaThumbnail']) {
+    const v = item[key];
+    if (Array.isArray(v)) candidates.push(...v);
+    else if (v) candidates.push(v);
+  }
+  for (const c of candidates) {
+    const a = (c && c.$) || c || {};
+    const url = a.url || a.href;
+    if (isImageUrl(url, a.type, a.medium)) return url;
+  }
+  return null;
+}
+
 function normalizeItem(item) {
   return {
     guid: item.guid || item.id || item.link || null,
@@ -46,6 +82,7 @@ function normalizeItem(item) {
     url: item.link || null,
     author: pickAuthor(item),
     contentHtml: pickContentHtml(item),
+    image_url: pickImage(item),
     published_at: toEpoch(item),
   };
 }

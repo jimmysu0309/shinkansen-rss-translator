@@ -55,6 +55,42 @@ describe('parseFeedXml', () => {
     const a = await parseFeedXml(atom);
     expect(a.items[0].author).toBe('Emma Roth');
   });
+
+  it('封面圖:Atom media:content(無 type,靠副檔名)/ RSS enclosure / media:thumbnail 都撈得到', async () => {
+    const atom = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/"><title>A</title>
+        <entry><title>t</title><id>a1</id>
+          <media:content url="https://cdn.theatlantic.com/media/img/mt/2026/08/x/original.jpg"/>
+        </entry>
+        <entry><title>t2</title><id>a2</id>
+          <media:thumbnail url="https://cdn/thumb.png"/>
+        </entry>
+      </feed>`;
+    const a = await parseFeedXml(atom);
+    expect(a.items[0].image_url).toBe('https://cdn.theatlantic.com/media/img/mt/2026/08/x/original.jpg');
+    expect(a.items[1].image_url).toBe('https://cdn/thumb.png');
+
+    const rss = `<?xml version="1.0"?>
+      <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+        <channel><title>R</title>
+          <item><title>有 enclosure</title><guid>r1</guid>
+            <enclosure url="https://cdn/cover.jpg" type="image/jpeg" length="1234"/>
+          </item>
+          <item><title>enclosure 是音檔</title><guid>r2</guid>
+            <enclosure url="https://cdn/ep.mp3" type="audio/mpeg" length="99"/>
+          </item>
+          <item><title>media:content 宣告 medium</title><guid>r3</guid>
+            <media:content url="https://cdn/no-ext" medium="image"/>
+          </item>
+          <item><title>什麼都沒有</title><guid>r4</guid></item>
+        </channel>
+      </rss>`;
+    const r = await parseFeedXml(rss);
+    expect(r.items[0].image_url).toBe('https://cdn/cover.jpg');
+    expect(r.items[1].image_url).toBe(null);   // podcast 附檔不是封面
+    expect(r.items[2].image_url).toBe('https://cdn/no-ext');
+    expect(r.items[3].image_url).toBe(null);
+  });
 });
 
 // ─── processFeed 編排(離線,注入 fake)───

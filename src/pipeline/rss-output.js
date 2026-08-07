@@ -6,7 +6,8 @@
 // 訊號層次:
 //   ✓ 輸出 Atom XML,含正確篇數、譯文標題/內文、連結、日期
 //   ✓ pending/error 篇退回原文(不遺漏文章)
-//   ✗ 不驗:Miniflux 端解析(部署時實測)
+//   ✓ 有 image_url 的篇章把封面圖前置成 hero(內文已有同圖 / 開頭已有圖則不加)
+//   ✗ 不驗:Miniflux 端解析與實際版面(部署時實測)
 
 import { Feed } from 'feed';
 import { getOpenccConvert } from '../engine.js';
@@ -43,12 +44,38 @@ export function buildFeedXml({ feed, entries, selfUrl }) {
       link: e.url || feed.source_url,
       // 作者沒帶會讓下游(Miniflux → Readwise)整條丟失作者
       author: e.author ? [{ name: convertAuthor(e.author) }] : undefined,
-      content: (done && e.content_translated) || e.content_html || '',
+      content: withHero((done && e.content_translated) || e.content_html || '', e.image_url),
       date: e.published_at ? new Date(e.published_at) : new Date(e.created_at || 0),
     });
   }
 
   return out.atom1();
+}
+
+// 封面圖前置成 hero。做在輸出層(而非入庫或翻譯前)是刻意的:翻譯管線的
+// 「段數進出必須相等」斷言只認內文,hero 在譯完之後才貼,永遠不可能影響切段回填。
+//
+// 兩個不加的情況:
+//   1. 內文已經出現同一張圖(比對「去掉 query 的網址」,CDN 常在同圖後面掛不同參數)
+//   2. 內文開頭 600 字元內已經有 <img>(圖輯類文章本來就以圖開場,再前置一張會變重複封面)
+// 判斷刻意用字串比對而不引 DOM 解析器:輸出路徑每次刷新都會跑,不值得為此背一個解析器。
+const HEAD_WINDOW = 600;
+
+function stripQuery(url) {
+  const i = url.search(/[?#]/);
+  return i === -1 ? url : url.slice(0, i);
+}
+
+export function withHero(html, imageUrl) {
+  if (!imageUrl || typeof imageUrl !== 'string') return html;
+  const body = html || '';
+  if (body.slice(0, HEAD_WINDOW).includes('<img')) return body;
+  if (body.includes(stripQuery(imageUrl))) return body;
+  return `<figure><img src="${escapeAttr(imageUrl)}" alt="" /></figure>${body}`;
+}
+
+function escapeAttr(s) {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function latestDate(entries) {
