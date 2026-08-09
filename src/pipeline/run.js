@@ -6,6 +6,7 @@
 //   ✓ 編排:抓取 → upsert(去重)→ 只翻 pending → markDone/markError → 記 usage
 //   ✓ conditional GET:304 不重抓
 //   ✓ 單篇翻譯失敗不影響其他篇(逐篇 try/catch)
+//   ✓ 全文抓取失敗:先用摘要翻出去 → 後續刷新補抓 → 上限 MAX_FULL_TEXT_ATTEMPTS 次後放棄
 //   ✗ 不驗:真實網路 / 真實 Gemini(用注入的 fake;真實走整合測試 / 部署)
 
 import { fetchFeed as defaultFetchFeed } from './fetch-feed.js';
@@ -18,6 +19,10 @@ import {
 
 // 每個 feed 最多保留的文章數預設值(可在設定頁調整;0 = 不限制)
 export const DEFAULT_MAX_ENTRIES_PER_FEED = 300;
+
+// 單篇全文抓取的總嘗試次數上限(第一次 + 之後刷新補抓)。超過就認定該網址抓不到,
+// 永久留摘要,不再每輪重抓 —— 否則抓不到的文章會被反覆重抓 + 重譯,燒 token。
+export const MAX_FULL_TEXT_ATTEMPTS = 3;
 
 // 進行中的 feed(id 集合):同一 feed 同時只允許一個 processFeed。
 // 沒有這道鎖,排程觸發與手動刷新重疊時會各自讀到同一批 pending → 同批文章翻兩次(重複扣 token)。
@@ -81,6 +86,17 @@ export async function processFeed(ctx, feed, deps = {}) {
   }
 }
 
+// 補抓失敗:計數 +1;用完次數就記一筆「放棄」讓 log 看得出來,之後不再補抓。
+function giveUpOrRetryLater(ctx, log, entry, err) {
+  const { full_text_retries: n } = ctx.entries.bumpFullTextFailure(entry.id);
+  const detail = err ? String(err?.message || err) : null;
+  if (n >= MAX_FULL_TEXT_ATTEMPTS) {
+    log('warn', 'fetch', `補抓全文連續失敗 ${n} 次,放棄改用摘要:${entry.title || '(無標題)'}`, detail);
+  } else {
+    log('warn', 'fetch', `補抓全文失敗(第 ${n} 次),下次刷新再試:${entry.title || '(無標題)'}`, detail);
+  }
+}
+
 async function processFeedLocked(ctx, feed, deps) {
   const apiKey = deps.apiKey;
   const fetchImpl = deps.fetchFeed || defaultFetchFeed;
@@ -127,7 +143,31 @@ async function processFeedLocked(ctx, feed, deps) {
     log('info', 'fetch', `${feed.title || feed.source_url}:抓取 ${res.items.length} 篇,新增 ${added} 篇`);
   }
 
-  // 3. 翻 pending(新條目 + 上次失敗重設的),不論 304 與否都執行
+  // 2.5 補抓上次全文失敗的文章(不論 304 與否都跑)。
+  //     抓全文失敗時當下仍用摘要翻譯輸出(讀者不會空等),但那篇會永久停在摘要 —— 這裡在後續
+  //     刷新時補抓,成功就覆蓋原文並重設 pending 重譯。累計 MAX_FULL_TEXT_ATTEMPTS 次失敗後放棄,
+  //     否則永遠抓不到的網址每 15 分鐘重抓一次沒完沒了。
+  const refetched = new Set(); // 本輪已在這裡抓過全文的 entry id → 步驟 3 不再重抓
+  if (feed.fetch_article) {
+    for (const e of ctx.entries.fullTextRetryable(feed.id, MAX_FULL_TEXT_ATTEMPTS)) {
+      try {
+        const full = await fetchFullTextImpl(e.url);
+        if (full) {
+          ctx.entries.updateContent(e.id, full);
+          ctx.entries.clearFullTextFailure(e.id);
+          ctx.entries.resetToPending(e.id);
+          refetched.add(e.id);
+          log('info', 'fetch', `補抓全文成功,重新翻譯:${e.title || '(無標題)'}`);
+        } else {
+          giveUpOrRetryLater(ctx, log, e, null);
+        }
+      } catch (err) {
+        giveUpOrRetryLater(ctx, log, e, err);
+      }
+    }
+  }
+
+  // 3. 翻 pending(新條目 + 上次失敗重設的 + 2.5 補抓成功的),不論 304 與否都執行
   const opts = buildTranslateOpts(ctx, feed, apiKey);
   const pending = ctx.entries.pendingByFeed(feed.id);
   let translated = 0, failed = 0;
@@ -135,18 +175,22 @@ async function processFeedLocked(ctx, feed, deps) {
     try {
       // 抓取全文(fetch_article):翻譯前先抓整篇正文覆蓋摘要
       let contentHtml = e.content_html;
-      if (feed.fetch_article && e.url) {
+      if (feed.fetch_article && e.url && !refetched.has(e.id)) {
         try {
           const full = await fetchFullTextImpl(e.url);
           if (full) {
             contentHtml = full;
             ctx.entries.updateContent(e.id, full);
+            if (e.full_text_retries) ctx.entries.clearFullTextFailure(e.id);
             log('info', 'fetch', `抓取全文:${e.title || '(無標題)'}`);
           } else {
-            log('warn', 'fetch', `抓取全文無結果,改用原摘要:${e.title || '(無標題)'}`);
+            // 先用摘要翻出去,計數 +1 → 下次刷新由步驟 2.5 補抓
+            ctx.entries.bumpFullTextFailure(e.id);
+            log('warn', 'fetch', `抓取全文無結果,先用原摘要(下次刷新補抓):${e.title || '(無標題)'}`);
           }
         } catch (err) {
-          log('warn', 'fetch', `抓取全文失敗,改用原摘要:${e.title || '(無標題)'}`, String(err?.message || err));
+          ctx.entries.bumpFullTextFailure(e.id);
+          log('warn', 'fetch', `抓取全文失敗,先用原摘要(下次刷新補抓):${e.title || '(無標題)'}`, String(err?.message || err));
         }
       }
       const r = await translateImpl({ title: e.title, contentHtml }, opts);

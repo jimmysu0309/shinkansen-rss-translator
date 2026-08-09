@@ -3,7 +3,8 @@
 // 訊號層次:
 //   ✓ Readability 在 Node(linkedom)抽正文、去掉 nav/footer 雜訊
 //   ✓ 圖片保留;相對 img/href 轉絕對網址
-//   ✓ fetchFullText 用注入的 fetch,非 2xx 回 null
+//   ✓ fetchFullText 用注入的 fetch,4xx 回 null;逾時 / 5xx / 429 退避重試一次
+//   ✗ 不驗:真實逾時秒數(用 fake fetch,不等 45s)
 //   ✗ 不驗:真實網站(JS 渲染站抓不到是 readability 先天限制)
 import { describe, it, expect } from 'vitest';
 import { extractReadable, fetchFullText } from '../src/pipeline/full-text.js';
@@ -46,9 +47,45 @@ describe('fetchFullText', () => {
     const out = await fetchFullText('https://ex.com/posts/a', { fetchImpl: fakeFetch });
     expect(out).toContain('文章第一段');
   });
-  it('非 2xx → null', async () => {
-    const fakeFetch = async () => ({ ok: false, status: 403, text: async () => '' });
-    expect(await fetchFullText('https://ex.com/x', { fetchImpl: fakeFetch })).toBe(null);
+  it('4xx → null,且不重試(永久性失敗)', async () => {
+    let calls = 0;
+    const fakeFetch = async () => { calls++; return { ok: false, status: 403, text: async () => '' }; };
+    expect(await fetchFullText('https://ex.com/x', { fetchImpl: fakeFetch, retryDelayMs: 0 })).toBe(null);
+    expect(calls).toBe(1);
+  });
+
+  it('逾時 / 連線錯 → 退避後重試一次,第二次成功就拿到正文', async () => {
+    let calls = 0;
+    const fakeFetch = async () => {
+      calls++;
+      if (calls === 1) throw new Error('The operation was aborted due to timeout');
+      return { ok: true, text: async () => PAGE };
+    };
+    const out = await fetchFullText('https://ex.com/posts/a', { fetchImpl: fakeFetch, retryDelayMs: 0 });
+    expect(calls).toBe(2);
+    expect(out).toContain('文章第一段');
+  });
+
+  it('兩次都逾時 → 丟出錯誤(上層改用摘要並記錄待補抓)', async () => {
+    let calls = 0;
+    const fakeFetch = async () => { calls++; throw new Error('timeout'); };
+    await expect(fetchFullText('https://ex.com/x', { fetchImpl: fakeFetch, retryDelayMs: 0 }))
+      .rejects.toThrow('timeout');
+    expect(calls).toBe(2);
+  });
+
+  it('5xx / 429 視為暫時性 → 重試', async () => {
+    for (const status of [503, 429]) {
+      let calls = 0;
+      const fakeFetch = async () => {
+        calls++;
+        if (calls === 1) return { ok: false, status, text: async () => '' };
+        return { ok: true, text: async () => PAGE };
+      };
+      const out = await fetchFullText('https://ex.com/x', { fetchImpl: fakeFetch, retryDelayMs: 0 });
+      expect(calls).toBe(2);
+      expect(out).toContain('文章第一段');
+    }
   });
 
   it('請求帶 timeout signal(掛掉的站不能卡住翻譯管線)', async () => {

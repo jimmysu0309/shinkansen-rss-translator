@@ -7,7 +7,7 @@
 //   ✗ 不驗:真實網路抓取(部署驗)
 import { describe, it, expect, beforeEach } from 'vitest';
 import { parseFeedXml, fetchFeed } from '../src/pipeline/fetch-feed.js';
-import { processFeed, processAllFeeds, pruneLogs, getLastRun } from '../src/pipeline/run.js';
+import { processFeed, processAllFeeds, pruneLogs, getLastRun, MAX_FULL_TEXT_ATTEMPTS } from '../src/pipeline/run.js';
 import { translateEntry } from '../src/pipeline/translate-entry.js';
 import { createDb } from '../src/db/index.js';
 
@@ -207,7 +207,7 @@ describe('processFeed 編排', () => {
     expect(ctx.entries.getByGuid(f2.id, 'g1').content_html).toContain('完整全文'); // 存回 DB
   });
 
-  it('fetch_article 抓全文失敗 → 退回原摘要,仍翻譯', async () => {
+  it('fetch_article 抓全文失敗 → 退回原摘要,仍翻譯,並記錄待補抓', async () => {
     const f3 = ctx.feeds.create({ source_url: 'https://ex.com/ft2', fetch_article: true });
     const items = [{ guid: 'g1', title: 'A', url: 'https://ex.com/a', contentHtml: '<p>摘要</p>', published_at: 1 }];
     let sawContent = null;
@@ -219,6 +219,69 @@ describe('processFeed 編排', () => {
     });
     expect(sawContent).toContain('摘要'); // 退回摘要
     expect(r.translated).toBe(1);
+    expect(ctx.entries.getByGuid(f3.id, 'g1').full_text_retries).toBe(1); // 待補抓
+  });
+
+  it('全文抓取逾時 → 下輪刷新補抓成功,覆蓋原文並重譯', async () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/ft3', fetch_article: true });
+    const items = [{ guid: 'g1', title: 'A', url: 'https://ex.com/a', contentHtml: '<p>摘要</p>', published_at: 1 }];
+    const translated = [];
+    const cap = async ({ contentHtml }) => { translated.push(contentHtml); return fakeTranslate({ title: 'A', contentHtml }); };
+
+    // 第一輪:逾時 → 用摘要翻,記 full_text_retries=1
+    await processFeed(ctx, f, {
+      apiKey: 'x', now: fixedNow, translateEntry: cap, fetchFeed: makeFetch(items),
+      fetchFullText: async () => { throw new Error('The operation was aborted due to timeout'); },
+    });
+    const after1 = ctx.entries.getByGuid(f.id, 'g1');
+    expect(after1.content_html).toContain('摘要');
+    expect(after1.full_text_retries).toBe(1);
+    expect(after1.translation_status).toBe('done'); // 讀者先看得到東西
+
+    // 第二輪:站台恢復 → 補抓成功 → 內文換全文、計數歸零、重譯一次
+    let fullTextCalls = 0;
+    const r2 = await processFeed(ctx, f, {
+      apiKey: 'x', now: fixedNow, translateEntry: cap, fetchFeed: makeFetch(items),
+      fetchFullText: async () => { fullTextCalls++; return '<p>完整全文</p>'; },
+    });
+    const after2 = ctx.entries.getByGuid(f.id, 'g1');
+    expect(fullTextCalls).toBe(1);                       // 補抓一次就好,翻譯階段不重抓
+    expect(after2.content_html).toContain('完整全文');
+    expect(after2.full_text_retries).toBe(0);
+    expect(after2.translation_status).toBe('done');
+    expect(r2.translated).toBe(1);
+    expect(translated[translated.length - 1]).toContain('完整全文'); // 這次翻的是全文
+  });
+
+  it('補抓連續失敗到上限就放棄,不再每輪重抓', async () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/ft4', fetch_article: true });
+    const items = [{ guid: 'g1', title: 'A', url: 'https://ex.com/a', contentHtml: '<p>摘要</p>', published_at: 1 }];
+    let calls = 0;
+    const run = () => processFeed(ctx, f, {
+      apiKey: 'x', now: fixedNow, translateEntry: fakeTranslate, fetchFeed: makeFetch(items),
+      fetchFullText: async () => { calls++; throw new Error('timeout'); },
+    });
+    await run(); // 第一次(翻譯階段)
+    await run(); // 補抓 1
+    await run(); // 補抓 2 → 累計 3 次,放棄
+    expect(calls).toBe(MAX_FULL_TEXT_ATTEMPTS);
+    expect(ctx.entries.getByGuid(f.id, 'g1').full_text_retries).toBe(MAX_FULL_TEXT_ATTEMPTS);
+    await run(); // 之後不再補抓
+    expect(calls).toBe(MAX_FULL_TEXT_ATTEMPTS);
+  });
+
+  it('沒勾抓全文的 feed 不會補抓', async () => {
+    const f = ctx.feeds.create({ source_url: 'https://ex.com/ft5', fetch_article: false });
+    const items = [{ guid: 'g1', title: 'A', url: 'https://ex.com/a', contentHtml: '<p>摘要</p>', published_at: 1 }];
+    await processFeed(ctx, f, { apiKey: 'x', now: fixedNow, translateEntry: fakeTranslate, fetchFeed: makeFetch(items) });
+    // 手動塞一個「曾失敗」狀態(模擬先前勾過全文後又取消)
+    ctx.entries.bumpFullTextFailure(ctx.entries.getByGuid(f.id, 'g1').id);
+    let calls = 0;
+    await processFeed(ctx, f, {
+      apiKey: 'x', now: fixedNow, translateEntry: fakeTranslate, fetchFeed: makeFetch(items),
+      fetchFullText: async () => { calls++; return '<p>全文</p>'; },
+    });
+    expect(calls).toBe(0);
   });
 
   it('沒 guid 的 item 跳過(無法去重)', async () => {

@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS entries (
   published_at           INTEGER,
   translation_status     TEXT NOT NULL DEFAULT 'pending',
   translation_error      TEXT,
+  full_text_retries      INTEGER NOT NULL DEFAULT 0,  -- 全文抓取累計失敗次數(0 = 沒失敗過 / 已補抓成功);>0 表示目前內文是摘要 fallback,下次刷新補抓
   tokens_in              INTEGER NOT NULL DEFAULT 0,
   tokens_out             INTEGER NOT NULL DEFAULT 0,
   created_at             INTEGER NOT NULL,

@@ -216,6 +216,35 @@ describe('entries DAO — 去重是核心', () => {
     expect(ctx.entries.pendingByFeed(feedId)).toHaveLength(2);
   });
 
+  it('全文補抓計數:bump / clear / resetAllToPending 歸零', () => {
+    const e = ctx.entries.upsertNew({ feed_id: feedId, guid: 'g1', url: 'https://ex.com/a' }).entry;
+    expect(ctx.entries.get(e.id).full_text_retries).toBe(0);
+    expect(ctx.entries.bumpFullTextFailure(e.id).full_text_retries).toBe(1);
+    expect(ctx.entries.bumpFullTextFailure(e.id).full_text_retries).toBe(2);
+    expect(ctx.entries.clearFullTextFailure(e.id).full_text_retries).toBe(0);
+    ctx.entries.bumpFullTextFailure(e.id);
+    ctx.entries.resetAllToPending(feedId); // 整 feed 重譯 = 全部重來,含全文抓取次數
+    expect(ctx.entries.get(e.id).full_text_retries).toBe(0);
+  });
+
+  it('fullTextRetryable:曾失敗但沒用完次數、有網址、非 pending 才列入', () => {
+    const mk = (guid, url) => ctx.entries.upsertNew({ feed_id: feedId, guid, url }).entry;
+    const fresh = mk('g1', 'https://ex.com/1');    // 沒失敗過 → 不列
+    const retry = mk('g2', 'https://ex.com/2');    // 失敗 1 次 → 列
+    const givenUp = mk('g3', 'https://ex.com/3');  // 失敗 3 次(達上限)→ 不列
+    const noUrl = mk('g4', null);                  // 沒網址 → 不列
+    const stillPending = mk('g5', 'https://ex.com/5'); // 還在 pending(翻譯階段自會抓)→ 不列
+    for (const e of [fresh, retry, givenUp, noUrl, stillPending]) ctx.entries.markDone(e.id, {});
+    ctx.entries.bumpFullTextFailure(retry.id);
+    for (let i = 0; i < 3; i++) ctx.entries.bumpFullTextFailure(givenUp.id);
+    ctx.entries.bumpFullTextFailure(noUrl.id);
+    ctx.entries.bumpFullTextFailure(stillPending.id);
+    ctx.entries.resetToPending(stillPending.id);
+
+    const list = ctx.entries.fullTextRetryable(feedId, 3);
+    expect(list.map((r) => r.guid)).toEqual(['g2']);
+  });
+
   it('pruneByFeed:只留最新 keep 篇(published_at 新→舊),別的 feed 不受影響', () => {
     const feed2 = ctx.feeds.create({ source_url: 'https://ex2.com/feed' }).id;
     for (let i = 1; i <= 5; i++) {
@@ -334,6 +363,27 @@ describe('logs DAO', () => {
     const cols = migrated.db.pragma('table_info(feeds)').map((c) => c.name);
     expect(cols).not.toContain('category');
     expect(migrated.feeds.getByUrl('https://old.com/feed').title).toBe('舊feed'); // 其他資料保留
+    migrated.db.close();
+    rmSync(tmp, { force: true });
+  });
+
+  it('遷移:舊 DB 的 entries 補上 full_text_retries(預設 0)', () => {
+    const tmp = join(mkdtempSync(join(tmpdir(), 'sf-migrate-ft-')), 'old.sqlite');
+    const raw = new Database(tmp);
+    raw.exec(`CREATE TABLE entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, feed_id INTEGER NOT NULL, guid TEXT NOT NULL,
+      url TEXT, title TEXT, author TEXT, title_translated TEXT, image_url TEXT,
+      content_html TEXT, content_translated TEXT, published_at INTEGER,
+      translation_status TEXT NOT NULL DEFAULT 'pending', translation_error TEXT,
+      tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL, translated_at INTEGER, UNIQUE (feed_id, guid))`);
+    raw.prepare("INSERT INTO entries (feed_id, guid, title, created_at) VALUES (1, 'g1', '舊文章', 0)").run();
+    raw.close();
+
+    const migrated = createDb(tmp);
+    const e = migrated.db.prepare("SELECT * FROM entries WHERE guid='g1'").get();
+    expect(e.full_text_retries).toBe(0); // 舊資料不會被誤判成待補抓
+    expect(e.title).toBe('舊文章');
     migrated.db.close();
     rmSync(tmp, { force: true });
   });

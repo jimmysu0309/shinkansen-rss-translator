@@ -155,22 +155,44 @@ function escapeAttr(s) {
   return s.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
 }
 
-/**
- * 抓取文章網址並抽全文。
- * @param {string} url
- * @param {{fetchImpl?:function, timeoutMs?:number}} [opts] fetchImpl 供測試注入
- * @returns {Promise<string|null>}
- */
 // 單頁 HTML 大小上限:超過視為異常頁(影音檔、爆量頁),放棄抽全文改用摘要,防吃爆記憶體
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 
+// 單次抓取逾時。實測部分站(sspai)TTFB 抖動大(0.7s ~ 5s+),偶爾整個掛住 →
+// 30s 會誤殺;拉到 45s 讓慢站有機會回來(背景執行,不擋前端)。
+const DEFAULT_TIMEOUT_MS = 45_000;
+// 逾時 / 連線錯 / 5xx / 429 視為暫時性 → 退避後再試一次(最壞一篇約 92s)。
+// 4xx(404 等)與「抽不出正文」是永久性,不重試。
+const RETRY_DELAY_MS = 2_000;
+
+/**
+ * 抓取文章網址並抽全文;暫時性失敗自動重試一次。
+ * @param {string} url
+ * @param {{fetchImpl?:function, timeoutMs?:number, retry?:boolean, retryDelayMs?:number}} [opts]
+ *        fetchImpl / retryDelayMs 供測試注入;retry:false 關掉重試
+ * @returns {Promise<string|null>} 正文 HTML;非 2xx(4xx)、過大、抽不出正文回 null;暫時性失敗兩次後 throw
+ */
 export async function fetchFullText(url, opts = {}) {
+  try {
+    return await fetchOnce(url, opts);
+  } catch (err) {
+    if (opts.retry === false) throw err;
+    await new Promise((r) => setTimeout(r, opts.retryDelayMs ?? RETRY_DELAY_MS));
+    return fetchOnce(url, opts);
+  }
+}
+
+async function fetchOnce(url, opts) {
   const doFetch = opts.fetchImpl || fetch;
   const resp = await doFetch(url, {
     headers: { 'user-agent': `Shinkansen-Feed/${APP_VERSION} (+full-text)` },
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   });
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    // 5xx / 429 是站方暫時性狀況 → 丟出去讓上層重試;其餘(404 等)直接放棄
+    if (resp.status >= 500 || resp.status === 429) throw new Error(`HTTP ${resp.status}`);
+    return null;
+  }
   const declared = Number(resp.headers?.get?.('content-length'));
   if (declared > MAX_HTML_BYTES) return null;
   const html = await resp.text();

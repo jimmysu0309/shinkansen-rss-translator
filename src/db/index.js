@@ -38,6 +38,9 @@ function migrate(db) {
   if (!entryCols.has('image_url')) {
     db.exec('ALTER TABLE entries ADD COLUMN image_url TEXT');
   }
+  if (!entryCols.has('full_text_retries')) {
+    db.exec('ALTER TABLE entries ADD COLUMN full_text_retries INTEGER NOT NULL DEFAULT 0');
+  }
   // 分類功能已移除(分類交給 Miniflux 匯入時處理)—— 既有 DB 把欄位連值一起刪
   const feedCols = new Set(db.pragma('table_info(feeds)').map((c) => c.name));
   if (feedCols.has('category')) {
@@ -268,16 +271,48 @@ function makeEntriesDao(db) {
       db.prepare('UPDATE entries SET content_html = ? WHERE id = ?').run(html, id);
       return byId.get(id);
     },
+    /** 全文抓取失敗 +1(內文目前是摘要 fallback,等下次刷新補抓) */
+    bumpFullTextFailure(id) {
+      db.prepare('UPDATE entries SET full_text_retries = full_text_retries + 1 WHERE id = ?').run(id);
+      return byId.get(id);
+    },
+    /** 全文抓到了 → 歸零失敗計數 */
+    clearFullTextFailure(id) {
+      db.prepare('UPDATE entries SET full_text_retries = 0 WHERE id = ?').run(id);
+      return byId.get(id);
+    },
+    /**
+     * 待補抓全文的條目:曾失敗(>0)但還沒用完次數(< maxAttempts)、有網址、已不在 pending
+     * (pending 的下一輪翻譯本來就會抓,不必在這裡重複)。
+     */
+    fullTextRetryable(feedId, maxAttempts) {
+      return db.prepare(`
+        SELECT * FROM entries
+        WHERE feed_id = ? AND url IS NOT NULL AND url != ''
+          AND full_text_retries > 0 AND full_text_retries < ?
+          AND translation_status != 'pending'
+        ORDER BY id
+      `).all(feedId, maxAttempts);
+    },
+    /** 單篇重設回 pending(供補抓到全文後重譯) */
+    resetToPending(id) {
+      return db.prepare(
+        "UPDATE entries SET translation_status='pending', translation_error=NULL WHERE id = ?",
+      ).run(id).changes > 0;
+    },
     /** 把某 feed 的 error 條目重設回 pending(供「重翻」);回傳重設筆數 */
     resetErrorsToPending(feedId) {
       return db.prepare(
         "UPDATE entries SET translation_status='pending', translation_error=NULL WHERE feed_id=? AND translation_status='error'",
       ).run(feedId).changes;
     },
-    /** 把某 feed 的所有條目(含 done)重設回 pending(供「整 feed 重譯」);回傳重設筆數 */
+    /**
+     * 把某 feed 的所有條目(含 done)重設回 pending(供「整 feed 重譯」);回傳重設筆數。
+     * 一併歸零 full_text_retries —— 「整 feed 重譯」語意是全部重來,先前放棄補抓的也重新給機會。
+     */
     resetAllToPending(feedId) {
       return db.prepare(
-        "UPDATE entries SET translation_status='pending', translation_error=NULL WHERE feed_id=?",
+        "UPDATE entries SET translation_status='pending', translation_error=NULL, full_text_retries=0 WHERE feed_id=?",
       ).run(feedId).changes;
     },
     deleteByFeed(feedId) { return delByFeed.run(feedId).changes; },
