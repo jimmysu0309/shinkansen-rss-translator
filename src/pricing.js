@@ -12,12 +12,14 @@ import {
   getPricingForModel, MODEL_PRICING as VENDOR_MODEL_PRICING, DEFAULT_GEMINI_CACHED_DISCOUNT,
 } from '../vendor/shinkansen/shinkansen/lib/model-pricing.js';
 
-// vendor 計價表(2026-07 校準)之外的本地補充,不動 vendor 檔(鐵律 §2)。
-// 3.5-flash-lite / 3.6-flash 已由 vendor v2.0.64 收錄,本地 entry 已刪(vendor 為準)。
-// gemini-3.5-flash:vendor 已下架,但本專案的費用是「讀取時查表重算」(非上游的寫入時定價),
-// 歷史 usage 紀錄若有此模型,沒有這條會歸零 → 保留末代單價。
+// vendor 計價表(2026-09 校準)之外的本地補充,不動 vendor 檔(鐵律 §2)。
+// 3.5-flash-lite / 3-flash-preview / 3.8-flash 由 vendor 收錄(vendor 為準)。
+// gemini-3.5-flash(vendor v2.0.64 下架)/ gemini-3.6-flash(vendor v2.4.0 下架):
+// 本專案的費用是「讀取時查表重算」(非上游的寫入時定價),歷史 usage 紀錄若有這些模型,
+// 沒有這條會歸零 → 保留末代單價。
 export const EXTRA_MODEL_PRICING = {
   'gemini-3.5-flash': { inputPerMTok: 1.50, outputPerMTok: 9.00, cachedDiscount: DEFAULT_GEMINI_CACHED_DISCOUNT },
+  'gemini-3.6-flash': { inputPerMTok: 1.50, outputPerMTok: 7.50, cachedDiscount: DEFAULT_GEMINI_CACHED_DISCOUNT },
 };
 
 // 對外的完整計價表(前端計價面板 / 費用計算共用同一份)

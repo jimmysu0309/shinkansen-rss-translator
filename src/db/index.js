@@ -46,6 +46,24 @@ function migrate(db) {
   if (feedCols.has('category')) {
     db.exec('ALTER TABLE feeds DROP COLUMN category');
   }
+  migrateRetiredModels(db);
+}
+
+// 退出選單的模型 ID → 接替模型(對齊 vendor storage.js 的 migrateGemini3xFlashModelIfNeeded,
+// 但本專案的設定在 SQLite,不走 chrome.storage,故在這裡自行改寫)。
+// 每次啟動都跑、天然冪等:表裡沒舊 ID 就是 no-op。usage 紀錄的 model 不動(歷史費用照舊 ID 計價)。
+export const RETIRED_MODEL_MAP = {
+  'gemini-3-flash-preview': 'gemini-3.8-flash',
+  'gemini-3.6-flash': 'gemini-3.8-flash',
+};
+function migrateRetiredModels(db) {
+  const feedStmt = db.prepare('UPDATE feeds SET model = ? WHERE model = ?');
+  // settings.value 是 JSON 字串 → 比對 / 寫入都要帶引號
+  const settingStmt = db.prepare("UPDATE settings SET value = ? WHERE key = 'model' AND value = ?");
+  for (const [oldId, newId] of Object.entries(RETIRED_MODEL_MAP)) {
+    feedStmt.run(newId, oldId);
+    settingStmt.run(JSON.stringify(newId), JSON.stringify(oldId));
+  }
 }
 
 // ─── settings:JSON kv ───────────────────────────────────────

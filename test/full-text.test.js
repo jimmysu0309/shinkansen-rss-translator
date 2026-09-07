@@ -8,6 +8,7 @@
 //   ✗ 不驗:真實網站(JS 渲染站抓不到是 readability 先天限制)
 import { describe, it, expect } from 'vitest';
 import { extractReadable, fetchFullText } from '../src/pipeline/full-text.js';
+import { USER_AGENT } from '../src/version.js';
 
 const PAGE = `<!DOCTYPE html><html><head><title>T</title></head><body>
   <nav>導覽列雜訊 menu junk</nav>
@@ -93,6 +94,7 @@ describe('fetchFullText', () => {
     const fakeFetch = async (url, init) => { saw = init; return { ok: true, text: async () => PAGE }; };
     await fetchFullText('https://ex.com/posts/a', { fetchImpl: fakeFetch });
     expect(saw.signal).toBeInstanceOf(AbortSignal);
+    expect(saw.headers['user-agent']).toBe(USER_AGENT); // 與 feed 抓取共用同一支 UA(單一資料源)
   });
 
   it('content-length 宣告超過 5MB → null(不下載)', async () => {

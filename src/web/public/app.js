@@ -71,9 +71,10 @@ function selectValue(sel, value, staleSuffix = '（已下架）') {
 const MODEL_LABELS = {
   'gemini-3.1-flash-lite': 'Flash Lite',
   'gemini-3.5-flash-lite': 'Flash Lite 3.5',
-  'gemini-3-flash-preview': 'Flash',
-  'gemini-3.5-flash': 'Flash 3.5',   // 已退出選單;歷史用量計價仍要顯示,保留 label
-  'gemini-3.6-flash': 'Flash 3.6',
+  'gemini-3-flash-preview': 'Flash',   // 已退出選單;歷史用量計價仍要顯示,保留 label
+  'gemini-3.5-flash': 'Flash 3.5',     // 同上
+  'gemini-3.6-flash': 'Flash 3.6',     // 同上
+  'gemini-3.8-flash': 'Flash 3.8',
 };
 function renderPricingRows(overrides) {
   const wrap = $('#pricing-rows');

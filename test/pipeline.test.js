@@ -10,6 +10,7 @@ import { parseFeedXml, fetchFeed } from '../src/pipeline/fetch-feed.js';
 import { processFeed, processAllFeeds, pruneLogs, getLastRun, MAX_FULL_TEXT_ATTEMPTS } from '../src/pipeline/run.js';
 import { translateEntry } from '../src/pipeline/translate-entry.js';
 import { createDb } from '../src/db/index.js';
+import { USER_AGENT } from '../src/version.js';
 
 // ─── parseFeedXml(離線)───
 describe('parseFeedXml', () => {
@@ -384,6 +385,17 @@ describe('processFeed 編排', () => {
 // ─── fetchFeed(離線,注入 fetchImpl)───
 describe('fetchFeed', () => {
   const RSS = '<rss version="2.0"><channel><title>T</title></channel></rss>';
+
+  it('User-Agent 用 Mozilla/5.0 (compatible; …) 慣例格式(AWS WAF 對純自訂 UA 回 202 挑戰頁)', async () => {
+    let saw;
+    const fake = async (url, init) => {
+      saw = init.headers;
+      return { status: 200, ok: true, headers: { get: () => null }, text: async () => RSS };
+    };
+    await fetchFeed('https://ex.com/f', { fetchImpl: fake });
+    expect(saw['user-agent']).toBe(USER_AGENT);
+    expect(USER_AGENT).toMatch(/^Mozilla\/5\.0 \(compatible; Shinkansen-Feed\/\d+\.\d+(\.\d+)?; /);
+  });
 
   it('XML 解析失敗(截斷回應)→ 重抓一次成功', async () => {
     const TRUNCATED = RSS.slice(0, 30); // 模擬上游截斷:缺結尾標籤

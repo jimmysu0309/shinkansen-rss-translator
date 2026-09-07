@@ -18,6 +18,40 @@ import { SCHEMA_SQL } from '../src/db/schema.js';
 let ctx;
 beforeEach(() => { ctx = createDb(':memory:'); });
 
+describe('退場模型一次性遷移(createDb 時)', () => {
+  it('feeds.model 與 settings.model 的 3.6-flash / 3-flash-preview 改寫成 3.8-flash;其他不動', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-migrate-'));
+    const path = join(dir, 'x.db');
+    try {
+      // 用舊資料直接灌 DB(模擬升級前的檔案)
+      const raw = new Database(path);
+      raw.exec(SCHEMA_SQL);
+      const ins = raw.prepare('INSERT INTO feeds(source_url, model, created_at) VALUES(?, ?, 1)');
+      ins.run('https://a.example/feed', 'gemini-3.6-flash');
+      ins.run('https://b.example/feed', 'gemini-3-flash-preview');
+      ins.run('https://c.example/feed', 'gemini-3.1-flash-lite');
+      ins.run('https://d.example/feed', null);
+      raw.prepare('INSERT INTO settings(key, value) VALUES(?, ?)').run('model', JSON.stringify('gemini-3.6-flash'));
+      raw.prepare('INSERT INTO usage(ts, model, input_tokens, output_tokens, cached_tokens) VALUES(1, ?, 1, 1, 0)')
+        .run('gemini-3.6-flash');
+      raw.close();
+
+      const c = createDb(path);
+      const byUrl = Object.fromEntries(c.feeds.list().map(f => [f.source_url, f.model]));
+      expect(byUrl['https://a.example/feed']).toBe('gemini-3.8-flash');
+      expect(byUrl['https://b.example/feed']).toBe('gemini-3.8-flash');
+      expect(byUrl['https://c.example/feed']).toBe('gemini-3.1-flash-lite');
+      expect(byUrl['https://d.example/feed']).toBeNull();
+      expect(c.settings.get('model')).toBe('gemini-3.8-flash');
+      // usage 的 model 不動:歷史費用照舊 ID 計價
+      expect(c.db.prepare('SELECT model FROM usage').get().model).toBe('gemini-3.6-flash');
+      c.db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('settings DAO', () => {
   it('set/get round-trip,支援物件值', () => {
     ctx.settings.set('model', 'gemini-3.1-flash-lite');

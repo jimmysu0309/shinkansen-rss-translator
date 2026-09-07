@@ -163,13 +163,14 @@ describe('完整備份匯入', () => {
 });
 
 describe('模型清單', () => {
-  it('defaults 提供四個可選模型(含 3.6 flash 與 3.5 flash lite),且都有內建計價', async () => {
+  it('defaults 提供三個可選模型(3.8 flash 取代 3.6 flash 與 flash preview),且都有內建計價', async () => {
     const d = (await app.inject({ method: 'GET', url: '/api/defaults' })).json();
     const ids = d.models.map(m => m.id);
-    expect(ids).toEqual([
-      'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.6-flash',
-    ]);
+    expect(ids).toEqual(['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']);
     for (const id of ids) expect(d.modelPricing[id]).toBeTruthy(); // 選得到的模型必有單價(費用統計不落空)
+    // 退場模型仍有計價(歷史用量費用不歸零),只是不在選單
+    expect(d.modelPricing['gemini-3.6-flash']).toBeTruthy();
+    expect(d.modelPricing['gemini-3-flash-preview']).toBeTruthy();
   });
 });
 

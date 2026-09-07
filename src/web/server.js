@@ -39,11 +39,12 @@ export const POLL_CRON_OPTIONS = [
 ];
 
 // 前端下拉可選的模型(便宜 → 貴排序;單價見 src/pricing.js)
+// 2026-09:gemini-3-flash-preview / gemini-3.6-flash 退出選單,由 gemini-3.8-flash 取代
+// (既有 feed / 全域設定存舊 ID 者由 db/index.js migrate 一次性改寫成 3.8)。
 export const SELECTABLE_MODELS = [
   { id: 'gemini-3.1-flash-lite', label: 'Lite（gemini-3.1-flash-lite）— 便宜' },
   { id: 'gemini-3.5-flash-lite', label: 'Flash Lite 3.5（gemini-3.5-flash-lite）— 便宜、新一代' },
-  { id: 'gemini-3-flash-preview', label: 'Flash（gemini-3-flash-preview）— 品質' },
-  { id: 'gemini-3.6-flash', label: 'Flash 3.6（gemini-3.6-flash）— 品質最佳' },
+  { id: 'gemini-3.8-flash', label: 'Flash 3.8（gemini-3.8-flash）— 品質最佳' },
 ];
 
 // 儲存於 settings 表、但不可透過 GET /api/settings 回傳的敏感鍵

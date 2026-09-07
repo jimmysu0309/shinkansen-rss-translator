@@ -8,7 +8,7 @@
 //   ✗ 不驗:真實網路(整合/部署階段驗);單元測試用注入的 fetch
 
 import Parser from 'rss-parser';
-import { APP_VERSION } from '../version.js';
+import { USER_AGENT } from '../version.js';
 
 // 回應大小上限:壞掉/惡意來源回超大內容不能吃爆記憶體(與 full-text 的 MAX_HTML_BYTES 同款護欄;
 // feed 常帶 content:encoded 全文,上限放寬到 10MB)
@@ -106,7 +106,7 @@ export async function parseFeedXml(xml) {
  */
 export async function fetchFeed(url, opts = {}) {
   const doFetch = opts.fetchImpl || fetch;
-  const headers = { 'user-agent': `Shinkansen-Feed/${APP_VERSION} (+RSS translator)` };
+  const headers = { 'user-agent': USER_AGENT };
   if (opts.etag) headers['if-none-match'] = opts.etag;
   if (opts.lastModified) headers['if-modified-since'] = opts.lastModified;
 

@@ -32,7 +32,12 @@ describe('costForUsage', () => {
     expect(costForUsage(null, {})).toBe(0);
   });
 
-  it('gemini-3.6-flash(vendor v2.0.64 起收錄):1.50/7.50', () => {
+  it('gemini-3.8-flash(vendor v2.4.8 起收錄,促銷價至 2026-12-31):0.75/3.75', () => {
+    const c = costForUsage('gemini-3.8-flash', { input_tokens: 1_000_000, output_tokens: 1_000_000 });
+    expect(c).toBeCloseTo(4.5, 6);
+  });
+
+  it('gemini-3.6-flash(vendor v2.4.0 已下架)保留歷史計價:1.50/7.50,舊用量紀錄費用不歸零', () => {
     const c = costForUsage('gemini-3.6-flash', { input_tokens: 1_000_000, output_tokens: 1_000_000 });
     expect(c).toBeCloseTo(9.0, 6);
   });

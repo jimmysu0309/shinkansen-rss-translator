@@ -27,7 +27,7 @@ export { DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, isPromptUnchangedFromDe
 // 預設模型 = gemini-3.1-flash-lite(對應現有 rssbox 的 Lite profile,便宜、品質夠)。
 // 引擎的 pickThinkingConfig 是為 gemini-3 系列的 thinkingLevel API 設計,故用 gemini-3;
 // 舊模型(gemini-2.5)不吃 thinkingLevel 會回「Thinking level is not supported」。
-// 正式模型選擇(Lite / Flash=gemini-3-flash-preview)由 Phase 5 web 介面逐 feed 設定。
+// 正式模型選擇(Lite / Flash Lite 3.5 / Flash 3.8)由 web 介面逐 feed 設定(清單見 web/server.js)。
 export const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 export const DEFAULT_TARGET_LANGUAGE = 'zh-TW';
 // 每批段數上限預設 50(feed 文章通常多段,調高可減少 API 往返;vendor 內建值為 20)。

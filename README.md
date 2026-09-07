@@ -148,7 +148,7 @@ http://shinkansen-rss:8088/rss/<feedId>
 ### web「設定」分頁
 
 - **API 金鑰**：在此輸入 + 「測試」按鈕（打 Gemini models 清單驗證）。**這是唯一設定金鑰的地方**。
-- **預設引擎 / 模型**：Gemini（Lite 3.1 / Flash Lite 3.5 / Flash preview / Flash 3.6）、Google 翻譯或 OpenCC 簡轉繁；可逐 feed 覆寫。
+- **預設引擎 / 模型**：Gemini（Lite 3.1 / Flash Lite 3.5 / Flash 3.8）、Google 翻譯或 OpenCC 簡轉繁；可逐 feed 覆寫。
 - **更新頻率**：多久自動抓取+翻譯所有 feed（每 5 分～每 6 小時 / 關閉），改完即時生效。
 - **每批段數 / 字元上限**：分批翻譯的門檻（段數預設 50）。
 - **Gemini Temperature**：0 最穩定、越高越有創意（預設 1）。
