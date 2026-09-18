@@ -302,6 +302,16 @@ describe('entries DAO — 去重是核心', () => {
     expect(ctx.entries.pruneByFeed(feedId, 5)).toBe(0); // 未超額不刪
   });
 
+  it('pruneByFeed:protectGuids 內的文章再舊也不刪(來源還在列)', () => {
+    // 驗 DAO 層:保護名單優先於日期排序。不驗 pipeline 有沒有把名單傳進來(見 pipeline.test.js)
+    for (let i = 1; i <= 5; i++) {
+      ctx.entries.upsertNew({ feed_id: feedId, guid: `g${i}`, published_at: i * 1000 });
+    }
+    // g1 日期最舊,照排序會被砍;受保護 → 活下來,只砍 g2
+    expect(ctx.entries.pruneByFeed(feedId, 3, ['g1'])).toBe(1);
+    expect(ctx.entries.listByFeed(feedId).map((e) => e.guid).sort()).toEqual(['g1', 'g3', 'g4', 'g5']);
+  });
+
   it('listByFeed 排序:無日期文章依 created_at 排,與 pruneByFeed 同一套排序(不變量)', () => {
     ctx.entries.upsertNew({ feed_id: feedId, guid: 'a', published_at: 5000 }, 1000);
     ctx.entries.upsertNew({ feed_id: feedId, guid: 'b', published_at: null }, 8000); // 無日期但最新進庫
@@ -397,6 +407,49 @@ describe('logs DAO', () => {
     const cols = migrated.db.pragma('table_info(feeds)').map((c) => c.name);
     expect(cols).not.toContain('category');
     expect(migrated.feeds.getByUrl('https://old.com/feed').title).toBe('舊feed'); // 其他資料保留
+    migrated.db.close();
+    rmSync(tmp, { force: true });
+  });
+
+  it('遷移:舊 DB 的 entries 補上 translation_retries(0)/ translation_failed_at(null),舊 error 仍是重試候選', () => {
+    // 驗 schema 遷移 + 升級前就卡住的 error 文章升級後會被自動重試撿到。不驗退避判斷(pipeline.test.js)
+    const tmp = join(mkdtempSync(join(tmpdir(), 'sf-migrate-tr-')), 'old.sqlite');
+    const seeded = createDb(tmp);
+    const f = seeded.feeds.create({ source_url: 'https://old.com/feed' });
+    const { entry } = seeded.entries.upsertNew({ feed_id: f.id, guid: 'g1' });
+    seeded.db.exec('ALTER TABLE entries DROP COLUMN translation_retries');
+    seeded.db.exec('ALTER TABLE entries DROP COLUMN translation_failed_at');
+    seeded.db.prepare("UPDATE entries SET translation_status='error', translation_error='Google Translate HTTP 429' WHERE id=?").run(entry.id);
+    seeded.db.close();
+
+    const migrated = createDb(tmp);
+    const cands = migrated.entries.errorRetryCandidates(f.id, 5);
+    expect(cands).toHaveLength(1);
+    expect(cands[0]).toMatchObject({ translation_retries: 0, translation_failed_at: null });
+    expect(migrated.entries.errorRetryCandidates(f.id, 0)).toHaveLength(0); // 次數已滿 → 不是候選
+    migrated.db.close();
+    rmSync(tmp, { force: true });
+  });
+
+  it('遷移:舊 DB 的 feeds 補上 max_entries(null = 繼承全域);DAO 可寫可清', () => {
+    // 驗 schema 遷移 + DAO 白名單。不驗 pipeline 是否採用這個值(見 pipeline.test.js)
+    const tmp = join(mkdtempSync(join(tmpdir(), 'sf-migrate-me-')), 'old.sqlite');
+    const raw = new Database(tmp);
+    raw.exec(`CREATE TABLE feeds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, source_url TEXT NOT NULL UNIQUE, title TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1, engine TEXT NOT NULL DEFAULT 'gemini',
+      model TEXT, service_tier TEXT, fetch_article INTEGER NOT NULL DEFAULT 0,
+      target_language TEXT, system_prompt TEXT, etag TEXT, last_modified TEXT,
+      last_checked_at INTEGER, last_error TEXT, created_at INTEGER NOT NULL)`);
+    raw.prepare('INSERT INTO feeds (source_url, created_at) VALUES (?, 0)').run('https://old.com/feed');
+    raw.close();
+
+    const migrated = createDb(tmp);
+    const old = migrated.feeds.getByUrl('https://old.com/feed');
+    expect(old.max_entries).toBeNull(); // 既有 feed 預設繼承全域,行為不變
+    expect(migrated.feeds.update(old.id, { max_entries: 1000 }).max_entries).toBe(1000);
+    expect(migrated.feeds.update(old.id, { max_entries: null }).max_entries).toBeNull();
+    expect(migrated.feeds.create({ source_url: 'https://new.com/feed', max_entries: 0 }).max_entries).toBe(0);
     migrated.db.close();
     rmSync(tmp, { force: true });
   });

@@ -21,7 +21,7 @@ const DEFAULTS = {
   model: 'gemini-3.1-flash-lite', models: [{ id: 'gemini-3.1-flash-lite', label: 'Lite' }],
   engines: [{ id: 'gemini', label: 'Gemini' }, { id: 'google', label: 'Google' }],
   systemPrompt: 'sp', forbiddenTerms: [{ forbidden: '視頻', replacement: '影片' }], targetLanguage: 'zh-TW',
-  maxUnitsPerBatch: 50, maxCharsPerBatch: 3500, temperature: 1, logRetentionDays: 7, maxEntriesPerFeed: 300,
+  maxUnitsPerBatch: 50, maxCharsPerBatch: 3500, temperature: 1, logRetentionDays: 7, maxEntriesPerFeed: 300, maxTranslateAttempts: 5,
   logLevels: ['info', 'warn', 'error'], logCategories: ['fetch', 'translate'],
   pollCron: '*/15 * * * *', pollCronOptions: [{ value: '*/15 * * * *', label: '每 15 分鐘' }, { value: '', label: '關閉' }],
   modelPricing: { 'gemini-3.1-flash-lite': { inputPerMTok: 0.25, outputPerMTok: 1.5 } }, hasApiKey: true,
@@ -29,11 +29,11 @@ const DEFAULTS = {
 // counts 由伺服器列表附上(前端不再逐 feed 撈詳情)
 const FEEDS = [
   { id: 1, title: 'take.surf', source_url: 'https://take.surf/feed.atom', engine: 'gemini', model: 'gemini-3.1-flash-lite', enabled: 1, fetch_article: 0, counts: { done: 1, pending: 0, error: 0 } },
-  { id: 2, title: 'err.feed', source_url: 'https://err.example/feed', engine: 'gemini', model: null, enabled: 1, fetch_article: 0, counts: { done: 3, pending: 0, error: 2 } },
+  { id: 2, title: 'err.feed', source_url: 'https://err.example/feed', engine: 'gemini', model: null, enabled: 1, fetch_article: 0, max_entries: 1000, counts: { done: 3, pending: 0, error: 2 } },
 ];
 const FEED2_ERRORS = [
-  { id: 9, title: '壞文章', url: 'https://err.example/a1', translation_error: 'Gemini API 500: internal error', published_at: Date.UTC(2026, 6, 28) },
-  { id: 10, title: null, url: null, translation_error: '譯文段數不符', published_at: null, created_at: Date.UTC(2026, 7, 1) },
+  { id: 9, title: '壞文章', url: 'https://err.example/a1', translation_error: 'Gemini API 500: internal error', translation_retries: 2, published_at: Date.UTC(2026, 6, 28) },
+  { id: 10, title: null, url: null, translation_error: '譯文段數不符', translation_retries: 5, published_at: null, created_at: Date.UTC(2026, 7, 1) },
 ];
 
 const USAGE = {
@@ -148,6 +148,15 @@ describe('前端:失敗 badge 展開失敗原因', () => {
     await new Promise((r) => setTimeout(r, 30));
     const feedsCallsAfter = global.fetch.mock.calls.filter(c => String(c[0]).endsWith('/api/feeds')).length;
     expect(feedsCallsAfter).toBe(feedsCallsBefore + 1);
+  });
+
+  it('每條顯示自動重試狀態:未達上限 → 稍後自動重試;達上限 → 不再自動重試', async () => {
+    const card = document.querySelector('#feed-list .feed-item[data-id="2"]');
+    card.querySelector('[data-act="errors"]').click();
+    await new Promise((r) => setTimeout(r, 10));
+    const lines = [...card.querySelectorAll('.feed-errors .err-retry')].map((el) => el.textContent);
+    expect(lines[0]).toBe('已失敗 2/5 次,稍後自動重試');
+    expect(lines[1]).toContain('已失敗 5/5 次,不再自動重試');
   });
 
   it('沒失敗的 feed 不渲染失敗 badge', () => {
@@ -270,6 +279,35 @@ describe('前端:feed 啟用/停用 toggle', () => {
 
   it('編輯面板不再有 enabled 欄位(toggle 是唯一入口,防雙路徑 drift)', () => {
     expect(document.querySelector('#feed-list [data-f="enabled"]')).toBeNull();
+  });
+});
+
+describe('前端:逐 feed 文章上限', () => {
+  beforeEach(boot);
+  // 驗表單渲染與送出的 patch 形狀。不驗伺服器範圍檢查(web.test.js)與視覺對齊(jsdom 不排版)。
+
+  it('沒自訂 → 欄位空白 + placeholder 顯示全域值、不出徽章;有自訂 → 帶值 + 徽章', () => {
+    const [c1, c2] = document.querySelectorAll('#feed-list .feed-item');
+    const i1 = c1.querySelector('[data-f="max_entries"]');
+    expect(i1.value).toBe('');
+    expect(i1.placeholder).toContain('300');
+    expect(c1.querySelector('.feed-meta').textContent).not.toContain('上限');
+    expect(c2.querySelector('[data-f="max_entries"]').value).toBe('1000');
+    expect(c2.querySelector('.feed-meta').textContent).toContain('上限:1000 篇');
+  });
+
+  it('儲存:空白送 null(繼承全域),填 0 送數字 0(不限制)—— 兩個 sentinel 不能混', async () => {
+    const save = async (card, raw) => {
+      global.fetch.mockClear();
+      card.querySelector('[data-f="max_entries"]').value = raw;
+      card.querySelector('[data-act="save"]').click();
+      await new Promise((r) => setTimeout(r, 30));
+      const call = global.fetch.mock.calls.find((c) => c[1]?.method === 'PATCH');
+      return JSON.parse(call[1].body).max_entries;
+    };
+    expect(await save(document.querySelector('#feed-list .feed-item[data-id="2"]'), '')).toBeNull();
+    expect(await save(document.querySelector('#feed-list .feed-item[data-id="1"]'), '0')).toBe(0);
+    expect(await save(document.querySelector('#feed-list .feed-item[data-id="1"]'), '1000')).toBe(1000);
   });
 });
 

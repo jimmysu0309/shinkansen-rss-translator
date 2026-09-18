@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS feeds (
   fetch_article      INTEGER NOT NULL DEFAULT 0,       -- 是否用 readability 抓全文
   target_language    TEXT,                             -- null = 用全域預設
   system_prompt      TEXT,                             -- 逐 feed 覆寫;null = 用全域
+  max_entries        INTEGER,                          -- 逐 feed 文章上限;null = 用全域 maxEntriesPerFeed,0 = 不限制
   -- 抓取狀態(conditional GET)
   etag               TEXT,
   last_modified      TEXT,
@@ -51,6 +52,8 @@ CREATE TABLE IF NOT EXISTS entries (
   translation_status     TEXT NOT NULL DEFAULT 'pending',
   translation_error      TEXT,
   full_text_retries      INTEGER NOT NULL DEFAULT 0,  -- 全文抓取累計失敗次數(0 = 沒失敗過 / 已補抓成功);>0 表示目前內文是摘要 fallback,下次刷新補抓
+  translation_retries    INTEGER NOT NULL DEFAULT 0,  -- 翻譯累計失敗次數(成功 / 手動重翻歸零);自動重試的上限與退避依據
+  translation_failed_at  INTEGER,                     -- 最近一次翻譯失敗時間(ms);null = 沒失敗過或升級前的舊 error(視為可立即重試)
   tokens_in              INTEGER NOT NULL DEFAULT 0,
   tokens_out             INTEGER NOT NULL DEFAULT 0,
   created_at             INTEGER NOT NULL,

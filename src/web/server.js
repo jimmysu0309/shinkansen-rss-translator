@@ -10,7 +10,7 @@ import Fastify from 'fastify';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildFeedXml } from '../pipeline/rss-output.js';
-import { processFeed, isFeedInFlight, getLastRun, DEFAULT_MAX_ENTRIES_PER_FEED } from '../pipeline/run.js';
+import { processFeed, isFeedInFlight, getLastRun, DEFAULT_MAX_ENTRIES_PER_FEED, MAX_TRANSLATE_ATTEMPTS } from '../pipeline/run.js';
 import { fetchFeed as defaultFetchFeed } from '../pipeline/fetch-feed.js';
 import {
   DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, ENGINES,
@@ -98,6 +98,16 @@ function csvCell(v) {
 // feed 來源網址只收 http(s),擋 javascript:/file: 等垃圾輸入
 function isHttpUrl(u) {
   try { return ['http:', 'https:'].includes(new URL(u).protocol); } catch { return false; }
+}
+
+// 逐 feed 文章上限正規化:null / '' = 繼承全域;否則必須是 0–10000 的整數(0 = 不限制,同全域設定頁的範圍)。
+// 不合法回 undefined(呼叫端回 400)—— 不默默夾值,免得使用者以為存的是自己打的數字。
+const MAX_ENTRIES_LIMIT = 10000;
+const MAX_ENTRIES_ERROR = `文章上限必須是 0–${MAX_ENTRIES_LIMIT} 的整數(留空 = 繼承全域)`;
+function normalizeMaxEntries(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 && n <= MAX_ENTRIES_LIMIT ? n : undefined;
 }
 
 // 常數時間比較(先 sha256 等長化),避免逐字元比對的 timing 洩漏
@@ -219,6 +229,7 @@ export function buildServer(ctx, opts = {}) {
     temperature: DEFAULT_TEMPERATURE,
     logRetentionDays: DEFAULT_LOG_RETENTION_DAYS,
     maxEntriesPerFeed: DEFAULT_MAX_ENTRIES_PER_FEED,
+    maxTranslateAttempts: MAX_TRANSLATE_ATTEMPTS, // 失敗清單顯示「已失敗 n/N 次」用
     logLevels: ['info', 'warn', 'error'],
     logCategories: ['fetch', 'translate', 'refresh', 'opml', 'system'],
     pollCron: DEFAULT_POLL_CRON,
@@ -263,7 +274,7 @@ export function buildServer(ctx, opts = {}) {
   // ─── 完整備份(設定 + feeds)───
   // 只備份使用者設定欄位,不含抓取狀態(etag / last_* / id)與 apiKey。
   const FEED_BACKUP_FIELDS = ['source_url', 'title', 'enabled', 'engine', 'model',
-    'service_tier', 'fetch_article', 'target_language', 'system_prompt'];
+    'service_tier', 'fetch_article', 'target_language', 'system_prompt', 'max_entries'];
 
   app.get('/api/backup/export', async (req, reply) => {
     reply.header('content-disposition', 'attachment; filename="shinkansen-feed-backup.json"');
@@ -293,6 +304,10 @@ export function buildServer(ctx, opts = {}) {
       // 只取備份檔內有出現的欄位:缺欄位不覆寫、不預設(手寫的精簡備份也安全)
       const patch = {};
       for (const k of FEED_BACKUP_FIELDS) if (k in f) patch[k] = f[k];
+      if ('max_entries' in patch) {
+        const m = normalizeMaxEntries(patch.max_entries);
+        if (m === undefined) delete patch.max_entries; else patch.max_entries = m;
+      }
       const existing = ctx.feeds.getByUrl(f.source_url);
       if (existing) { ctx.feeds.update(existing.id, patch); updated++; }
       else { ctx.feeds.create({ ...patch, engine: engineOrDefault(patch.engine) }); added++; }
@@ -351,7 +366,9 @@ export function buildServer(ctx, opts = {}) {
     if (!body.source_url) return reply.code(400).send({ error: 'source_url 必填' });
     if (!isHttpUrl(body.source_url)) return reply.code(400).send({ error: 'source_url 必須是 http(s) 網址' });
     if (ctx.feeds.getByUrl(body.source_url)) return reply.code(409).send({ error: '此 feed 已存在' });
-    return reply.code(201).send(ctx.feeds.create({ ...body, engine: engineOrDefault(body.engine) }));
+    const maxEntries = normalizeMaxEntries(body.max_entries);
+    if (maxEntries === undefined) return reply.code(400).send({ error: MAX_ENTRIES_ERROR });
+    return reply.code(201).send(ctx.feeds.create({ ...body, max_entries: maxEntries, engine: engineOrDefault(body.engine) }));
   });
   app.patch('/api/feeds/:id', async (req, reply) => {
     const body = req.body || {};
@@ -364,6 +381,11 @@ export function buildServer(ctx, opts = {}) {
       if (dup && dup.id !== Number(req.params.id)) {
         return reply.code(409).send({ error: '此 feed 網址已被其他 feed 使用' });
       }
+    }
+    if ('max_entries' in body) {
+      const maxEntries = normalizeMaxEntries(body.max_entries);
+      if (maxEntries === undefined) return reply.code(400).send({ error: MAX_ENTRIES_ERROR });
+      body.max_entries = maxEntries;
     }
     const f = ctx.feeds.update(Number(req.params.id), body);
     if (!f) return reply.code(404).send({ error: 'feed 不存在' });

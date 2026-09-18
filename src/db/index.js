@@ -41,10 +41,19 @@ function migrate(db) {
   if (!entryCols.has('full_text_retries')) {
     db.exec('ALTER TABLE entries ADD COLUMN full_text_retries INTEGER NOT NULL DEFAULT 0');
   }
+  if (!entryCols.has('translation_retries')) {
+    db.exec('ALTER TABLE entries ADD COLUMN translation_retries INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!entryCols.has('translation_failed_at')) {
+    db.exec('ALTER TABLE entries ADD COLUMN translation_failed_at INTEGER');
+  }
   // 分類功能已移除(分類交給 Miniflux 匯入時處理)—— 既有 DB 把欄位連值一起刪
   const feedCols = new Set(db.pragma('table_info(feeds)').map((c) => c.name));
   if (feedCols.has('category')) {
     db.exec('ALTER TABLE feeds DROP COLUMN category');
+  }
+  if (!feedCols.has('max_entries')) {
+    db.exec('ALTER TABLE feeds ADD COLUMN max_entries INTEGER');
   }
   migrateRetiredModels(db);
 }
@@ -99,9 +108,9 @@ function makeSettingsDao(db) {
 function makeFeedsDao(db) {
   const insert = db.prepare(`
     INSERT INTO feeds (source_url, title, enabled, engine, model, service_tier,
-                       fetch_article, target_language, system_prompt, created_at)
+                       fetch_article, target_language, system_prompt, max_entries, created_at)
     VALUES (@source_url, @title, @enabled, @engine, @model, @service_tier,
-            @fetch_article, @target_language, @system_prompt, @created_at)
+            @fetch_article, @target_language, @system_prompt, @max_entries, @created_at)
   `);
   const byId = db.prepare('SELECT * FROM feeds WHERE id = ?');
   const byUrl = db.prepare('SELECT * FROM feeds WHERE source_url = ?');
@@ -115,7 +124,7 @@ function makeFeedsDao(db) {
   `);
 
   const FIELDS = ['source_url', 'title', 'enabled', 'engine', 'model', 'service_tier',
-    'fetch_article', 'target_language', 'system_prompt'];
+    'fetch_article', 'target_language', 'system_prompt', 'max_entries'];
 
   return {
     create(feed, now) {
@@ -130,6 +139,7 @@ function makeFeedsDao(db) {
         fetch_article: feed.fetch_article ? 1 : 0,
         target_language: feed.target_language ?? null,
         system_prompt: feed.system_prompt ?? null,
+        max_entries: feed.max_entries ?? null,
         created_at: at,
       };
       const info = insert.run(row);
@@ -203,19 +213,27 @@ function makeEntriesDao(db) {
   const markDone = db.prepare(`
     UPDATE entries SET title_translated = @title_translated, content_translated = @content_translated,
       translation_status = 'done', translation_error = NULL,
+      translation_retries = 0, translation_failed_at = NULL,
       tokens_in = @tokens_in, tokens_out = @tokens_out, translated_at = @translated_at
     WHERE id = @id
   `);
   const markError = db.prepare(`
-    UPDATE entries SET translation_status = 'error', translation_error = @err WHERE id = @id
+    UPDATE entries SET translation_status = 'error', translation_error = @err,
+      translation_retries = translation_retries + 1, translation_failed_at = @at
+    WHERE id = @id
   `);
   const delByFeed = db.prepare('DELETE FROM entries WHERE feed_id = ?');
-  // 保留最新 keep 篇(排序必須同 listByFeed,見上方 COALESCE 註記),其餘刪除 —— 防 entries 無限成長
+  // 保留最新 keep 篇(排序必須同 listByFeed,見上方 COALESCE 註記),其餘刪除 —— 防 entries 無限成長。
+  // @protect = 來源本次還在列的 guid(JSON 陣列),一律不刪:「精選 / best-of」類 feed 會把
+  // published_at 很舊的文章重新列出,光靠日期排序會把它排到 keep 之外 → 砍掉 → 下次抓取
+  // 重插 → 重翻 → 再砍,每 15 分鐘燒一次 token(2026-09 Atlantic 事故,單篇被翻 85 次)。
   const pruneOld = db.prepare(`
-    DELETE FROM entries WHERE feed_id = @feed_id AND id NOT IN (
-      SELECT id FROM entries WHERE feed_id = @feed_id
-      ORDER BY COALESCE(published_at, created_at) DESC, id DESC LIMIT @keep
-    )
+    DELETE FROM entries WHERE feed_id = @feed_id
+      AND guid NOT IN (SELECT value FROM json_each(@protect))
+      AND id NOT IN (
+        SELECT id FROM entries WHERE feed_id = @feed_id
+        ORDER BY COALESCE(published_at, created_at) DESC, id DESC LIMIT @keep
+      )
   `);
 
   return {
@@ -267,11 +285,27 @@ function makeEntriesDao(db) {
       });
       return byId.get(id);
     },
-    markError(id, err) { markError.run({ id, err: String(err).slice(0, 500) }); return byId.get(id); },
+    /** 標記翻譯失敗;失敗次數 +1 並記下時間(自動重試的上限 / 退避靠這兩欄) */
+    markError(id, err, now) {
+      markError.run({ id, err: String(err).slice(0, 500), at: now ?? Date.now() });
+      return byId.get(id);
+    },
+    /**
+     * 可自動重試的失敗文章:失敗次數未達 maxAttempts。最久沒試的排前面(升級前的舊 error
+     * translation_failed_at 為 null → 最優先)。退避時間是否已到由呼叫端判斷(排程表在 pipeline)。
+     */
+    errorRetryCandidates(feedId, maxAttempts) {
+      return db.prepare(`
+        SELECT * FROM entries
+        WHERE feed_id = ? AND translation_status = 'error' AND translation_retries < ?
+        ORDER BY COALESCE(translation_failed_at, 0), id
+      `).all(feedId, maxAttempts);
+    },
     /** 翻譯失敗的文章清單(給前端「N 失敗」badge 展開失敗原因用) */
     listErrorsByFeed(feedId) {
       return db.prepare(`
-        SELECT id, title, url, translation_error, published_at, created_at FROM entries
+        SELECT id, title, url, translation_error, translation_retries, translation_failed_at,
+               published_at, created_at FROM entries
         WHERE feed_id = ? AND translation_status = 'error'
         ORDER BY published_at DESC, id DESC
       `).all(feedId);
@@ -318,10 +352,10 @@ function makeEntriesDao(db) {
         "UPDATE entries SET translation_status='pending', translation_error=NULL WHERE id = ?",
       ).run(id).changes > 0;
     },
-    /** 把某 feed 的 error 條目重設回 pending(供「重翻」);回傳重設筆數 */
+    /** 把某 feed 的 error 條目重設回 pending(供「重翻」);回傳重設筆數。手動重翻 = 失敗次數歸零,自動重試重新給滿額度 */
     resetErrorsToPending(feedId) {
       return db.prepare(
-        "UPDATE entries SET translation_status='pending', translation_error=NULL WHERE feed_id=? AND translation_status='error'",
+        "UPDATE entries SET translation_status='pending', translation_error=NULL, translation_retries=0, translation_failed_at=NULL WHERE feed_id=? AND translation_status='error'",
       ).run(feedId).changes;
     },
     /**
@@ -330,13 +364,16 @@ function makeEntriesDao(db) {
      */
     resetAllToPending(feedId) {
       return db.prepare(
-        "UPDATE entries SET translation_status='pending', translation_error=NULL, full_text_retries=0 WHERE feed_id=?",
+        "UPDATE entries SET translation_status='pending', translation_error=NULL, full_text_retries=0, translation_retries=0, translation_failed_at=NULL WHERE feed_id=?",
       ).run(feedId).changes;
     },
     deleteByFeed(feedId) { return delByFeed.run(feedId).changes; },
-    /** 只保留該 feed 最新 keep 篇(published_at 新→舊,同 listByFeed 排序);回傳刪除筆數 */
-    pruneByFeed(feedId, keep) {
-      return pruneOld.run({ feed_id: feedId, keep }).changes;
+    /**
+     * 只保留該 feed 最新 keep 篇(published_at 新→舊,同 listByFeed 排序);回傳刪除筆數。
+     * protectGuids:來源還在列的 guid,不論多舊都不刪(防重插重翻迴圈)。
+     */
+    pruneByFeed(feedId, keep, protectGuids = []) {
+      return pruneOld.run({ feed_id: feedId, keep, protect: JSON.stringify(protectGuids) }).changes;
     },
   };
 }

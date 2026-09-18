@@ -7,7 +7,10 @@
 //   ✗ 不驗:真實網路抓取(部署驗)
 import { describe, it, expect, beforeEach } from 'vitest';
 import { parseFeedXml, fetchFeed } from '../src/pipeline/fetch-feed.js';
-import { processFeed, processAllFeeds, pruneLogs, getLastRun, MAX_FULL_TEXT_ATTEMPTS } from '../src/pipeline/run.js';
+import {
+  processFeed, processAllFeeds, pruneLogs, getLastRun, MAX_FULL_TEXT_ATTEMPTS,
+  MAX_TRANSLATE_ATTEMPTS, TRANSLATE_RETRY_BACKOFF_MS, MAX_ERROR_RETRIES_PER_RUN, isTranslateRetryDue,
+} from '../src/pipeline/run.js';
 import { translateEntry } from '../src/pipeline/translate-entry.js';
 import { createDb } from '../src/db/index.js';
 import { USER_AGENT } from '../src/version.js';
@@ -294,6 +297,98 @@ describe('processFeed 編排', () => {
     expect(ctx.entries.listByFeed(feed.id)).toHaveLength(0);
   });
 
+  // ── 翻譯失敗自動重試 ──
+  // 驗:編排層的退避 / 次數上限 / 每輪篇數上限 / 成功後歸零。
+  // 不驗:真實 Google 429 或 Gemini 額度錯誤的形狀(這裡一律用丟錯的 fake;任何錯誤都同等對待),
+  //       也不驗退避時間表對「真實限流持續多久」是否夠長(那要看 production log)。
+  describe('翻譯失敗自動重試', () => {
+    const items = [{ guid: 'g1', title: 'A', contentHtml: '<p>x</p>', published_at: 1 }];
+    const notModified = async () => ({ notModified: true, items: [], etag: null, lastModified: null });
+    let t, calls, failing;
+    const translate = async (e) => { calls++; if (failing) throw new Error('Google Translate HTTP 429'); return fakeTranslate(e); };
+    const run = (fetchFeed = notModified) => processFeed(ctx, feed, { apiKey: 'x', now: () => t, fetchFeed, translateEntry: translate });
+    beforeEach(() => { t = 1_000_000; calls = 0; failing = true; });
+
+    it('暫時性失敗:退避時間沒到不重試;到了自動重試,成功後歸零失敗次數', async () => {
+      await run(makeFetch(items));
+      let e = ctx.entries.getByGuid(feed.id, 'g1');
+      expect(e).toMatchObject({ translation_status: 'error', translation_retries: 1, translation_failed_at: 1_000_000 });
+
+      t += TRANSLATE_RETRY_BACKOFF_MS[0] - 1; // 差 1ms:手動連按刷新不該狂打被限流的端點
+      await run();
+      expect(calls).toBe(1);
+
+      t += 1; failing = false;
+      const r = await run();
+      expect(r.translated).toBe(1);
+      e = ctx.entries.getByGuid(feed.id, 'g1');
+      expect(e).toMatchObject({ translation_status: 'done', translation_retries: 0, translation_failed_at: null, translation_error: null });
+    });
+
+    it('一直失敗:間隔逐次拉長,總共只試 MAX_TRANSLATE_ATTEMPTS 次就停(不無限燒)', async () => {
+      await run(makeFetch(items));
+      for (let i = 0; i < 20; i++) { t += 24 * 3600_000; await run(); } // 每次都等超過最長退避
+      expect(calls).toBe(MAX_TRANSLATE_ATTEMPTS);
+      const e = ctx.entries.getByGuid(feed.id, 'g1');
+      expect(e.translation_status).toBe('error'); // 留在 error 等人工,不是默默消失
+      expect(e.translation_retries).toBe(MAX_TRANSLATE_ATTEMPTS);
+      expect(ctx.logs.query().some((l) => /已達上限不再自動重試/.test(l.message))).toBe(true);
+    });
+
+    it('退避時間表:第 n 次失敗後等 BACKOFF[n-1];舊版留下的 error(無失敗時間)立即可試', () => {
+      const at = 5_000_000;
+      TRANSLATE_RETRY_BACKOFF_MS.forEach((ms, i) => {
+        const e = { translation_retries: i + 1, translation_failed_at: at };
+        expect(isTranslateRetryDue(e, at + ms - 1)).toBe(false);
+        expect(isTranslateRetryDue(e, at + ms)).toBe(true);
+      });
+      expect(isTranslateRetryDue({ translation_retries: 0, translation_failed_at: null }, 0)).toBe(true);
+    });
+
+    it('積壓的失敗文章每輪最多重試 MAX_ERROR_RETRIES_PER_RUN 篇(不對免費端點爆量),最久沒試的優先', async () => {
+      const n = MAX_ERROR_RETRIES_PER_RUN + 2;
+      for (let i = 1; i <= n; i++) {
+        const { entry } = ctx.entries.upsertNew({ feed_id: feed.id, guid: `e${i}`, title: `E${i}`, content_html: '<p>x</p>' }, t);
+        ctx.entries.markError(entry.id, 'old 429', t + i); // e1 最早失敗
+      }
+      t += 24 * 3600_000; failing = false;
+      const r = await run();
+      expect(r.translated).toBe(MAX_ERROR_RETRIES_PER_RUN);
+      expect(ctx.entries.getByGuid(feed.id, 'e1').translation_status).toBe('done');
+      expect(ctx.entries.getByGuid(feed.id, `e${n}`).translation_status).toBe('error'); // 下一輪再輪到
+    });
+
+    it('手動「重翻」歸零失敗次數:已達上限的文章重新拿到完整自動重試額度', async () => {
+      await run(makeFetch(items));
+      for (let i = 0; i < 10; i++) { t += 24 * 3600_000; await run(); }
+      expect(ctx.entries.resetErrorsToPending(feed.id)).toBe(1);
+      expect(ctx.entries.getByGuid(feed.id, 'g1')).toMatchObject({ translation_retries: 0, translation_failed_at: null });
+    });
+  });
+
+  it('entry 上限:來源重新列出的舊日期文章不被清掉,連續刷新不重翻(防 token 迴圈)', async () => {
+    // 重現 2026-09 Atlantic best-of 事故:庫已滿 N 篇較新文章,來源又列出一篇 published_at 很舊的長文。
+    // 驗:第一輪翻 1 次後留在庫內;第二輪同一份來源 → 不重插、不重翻。
+    // 不驗:真實 feed 的 guid 穩定性(guid 每次變動是另一類重翻問題,這條抓不到)。
+    for (let i = 1; i <= 3; i++) {
+      const { entry } = ctx.entries.upsertNew({ feed_id: feed.id, guid: `recent${i}`, published_at: 5000 + i }, fixedNow());
+      ctx.entries.markDone(entry.id, {});
+    }
+    const items = [{ guid: 'classic', title: 'C', contentHtml: '<p>x</p>', published_at: 1 }];
+    let calls = 0;
+    const countingTranslate = async (...a) => { calls++; return fakeTranslate(...a); };
+    const deps = {
+      apiKey: 'x', now: fixedNow, fetchFeed: makeFetch(items), translateEntry: countingTranslate,
+      maxEntriesPerFeed: 3,
+    };
+    const r1 = await processFeed(ctx, feed, deps);
+    expect(r1.translated).toBe(1);
+    expect(ctx.entries.listByFeed(feed.id).map((e) => e.guid)).toContain('classic');
+    const r2 = await processFeed(ctx, feed, deps);
+    expect(r2.added).toBe(0);
+    expect(calls).toBe(1);
+  });
+
   it('entry 上限:處理結尾清掉超額舊文章,只留最新 N 篇', async () => {
     // 先塞 4 篇舊文章(已翻),再抓進 1 篇新的;上限 3 → 清掉最舊 2 篇
     for (let i = 1; i <= 4; i++) {
@@ -340,6 +435,21 @@ describe('processFeed 編排', () => {
     });
     expect(r.pruned).toBe(2);
     expect(ctx.entries.listByFeed(feed.id)).toHaveLength(3);
+  });
+
+  it('entry 上限:feed 自訂 max_entries 優先於全域;null 繼承全域;0 = 該 feed 不限制', async () => {
+    // 驗上限來源優先序(feed → 全域)。不驗 UI / API 怎麼把值寫進 feeds.max_entries(見 web / frontend 測試)
+    ctx.settings.set('maxEntriesPerFeed', 2);
+    for (let i = 1; i <= 5; i++) {
+      const { entry } = ctx.entries.upsertNew({ feed_id: feed.id, guid: `old${i}`, published_at: i * 1000 }, fixedNow());
+      ctx.entries.markDone(entry.id, {});
+    }
+    const run = (f) => processFeed(ctx, f, { apiKey: 'x', now: fixedNow, fetchFeed: makeFetch([]), translateEntry: fakeTranslate });
+
+    expect((await run(ctx.feeds.update(feed.id, { max_entries: 4 }))).pruned).toBe(1);  // 自訂 4 > 全域 2
+    expect((await run(ctx.feeds.update(feed.id, { max_entries: 0 }))).pruned).toBe(0);  // 0 = 不限制
+    expect((await run(ctx.feeds.update(feed.id, { max_entries: null }))).pruned).toBe(2); // 繼承全域 2:4 → 2
+    expect(ctx.entries.listByFeed(feed.id)).toHaveLength(2);
   });
 
   it('entry 上限:設 0 = 不限制,不清理', async () => {

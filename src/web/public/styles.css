@@ -92,6 +92,8 @@ button.danger:hover { text-decoration: underline; }
 /* ─── 提示 ─── */
 .hint { color: var(--fg-dim); font-size: 12px; margin: 6px 0 0; }
 .hint-inline { color: var(--fg-dim); font-weight: 400; font-size: 11px; margin-left: 6px; }
+/* sentinel 值(0 = 不限制 / 空白 = 繼承)用品牌色 + 粗體雙通道標注,不讓使用者猜 */
+.hint-inline strong { color: var(--accent); font-weight: 600; }
 code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px;
   background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 
@@ -215,6 +217,7 @@ button.badge.error { cursor: pointer; text-decoration: underline; text-underline
 .feed-errors a { font-size: 13px; }
 .feed-errors .err-dismiss { margin-left: auto; padding: 2px 10px; font-size: 12px; }
 .feed-errors .err-msg { font-size: 12px; color: var(--fg-dim); font-family: ui-monospace, SFMono-Regular, monospace; margin-top: 2px; word-break: break-all; }
+.feed-errors .err-retry { font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
 .feed-edit { margin: 10px 0; padding: 12px; background: var(--bg); border-radius: 8px; }
 .feed-edit .grid2 { gap: 8px 12px; }
 .feed-edit label { font-size: 12px; color: var(--fg-dim); }

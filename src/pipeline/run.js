@@ -7,6 +7,7 @@
 //   ✓ conditional GET:304 不重抓
 //   ✓ 單篇翻譯失敗不影響其他篇(逐篇 try/catch)
 //   ✓ 全文抓取失敗:先用摘要翻出去 → 後續刷新補抓 → 上限 MAX_FULL_TEXT_ATTEMPTS 次後放棄
+//   ✓ 翻譯失敗:退避後自動重試 → 上限 MAX_TRANSLATE_ATTEMPTS 次後留在 error 等人工
 //   ✗ 不驗:真實網路 / 真實 Gemini(用注入的 fake;真實走整合測試 / 部署)
 
 import { fetchFeed as defaultFetchFeed } from './fetch-feed.js';
@@ -23,6 +24,25 @@ export const DEFAULT_MAX_ENTRIES_PER_FEED = 300;
 // 單篇全文抓取的總嘗試次數上限(第一次 + 之後刷新補抓)。超過就認定該網址抓不到,
 // 永久留摘要,不再每輪重抓 —— 否則抓不到的文章會被反覆重抓 + 重譯,燒 token。
 export const MAX_FULL_TEXT_ATTEMPTS = 3;
+
+// 翻譯失敗的自動重試。失敗原因多半是暫時性的(Google Translate 429 限流、Gemini 額度 / 逾時、網路),
+// 但 error 狀態以前只能手動按「重翻」→ 暫時性失敗變成永久漏譯(2026-09:9to5Mac 38% 文章卡在 429)。
+//   - MAX_TRANSLATE_ATTEMPTS:單篇總嘗試次數(第一次 + 自動重試)。用完就留在 error 等人工處理,
+//     不無限重試 —— 會吃 token 才失敗的錯誤(如長文逾時)最壞成本 = 單篇成本 × 此值。
+//   - TRANSLATE_RETRY_BACKOFF_MS[n-1]:第 n 次失敗後至少隔多久才重試。限流常持續數小時,
+//     每 15 分鐘連打只會把額度用完又延長封鎖;拉長間隔,總涵蓋約 17 小時。
+//   - MAX_ERROR_RETRIES_PER_RUN:每輪每 feed 最多重試幾篇。積壓的失敗文章一次全打 = 對免費端點
+//     的請求爆量,正好觸發限流;分批慢慢消化。
+export const MAX_TRANSLATE_ATTEMPTS = 5;
+export const TRANSLATE_RETRY_BACKOFF_MS = [10 * 60_000, 60 * 60_000, 4 * 3600_000, 12 * 3600_000];
+export const MAX_ERROR_RETRIES_PER_RUN = 3;
+
+/** 這篇失敗文章的退避時間到了沒(translation_failed_at 為 null = 升級前的舊 error,立即可試) */
+export function isTranslateRetryDue(entry, nowMs) {
+  if (entry.translation_failed_at == null) return true;
+  const i = Math.min(Math.max(entry.translation_retries, 1), TRANSLATE_RETRY_BACKOFF_MS.length) - 1;
+  return nowMs - entry.translation_failed_at >= TRANSLATE_RETRY_BACKOFF_MS[i];
+}
 
 // 進行中的 feed(id 集合):同一 feed 同時只允許一個 processFeed。
 // 沒有這道鎖,排程觸發與手動刷新重疊時會各自讀到同一批 pending → 同批文章翻兩次(重複扣 token)。
@@ -167,7 +187,15 @@ async function processFeedLocked(ctx, feed, deps) {
     }
   }
 
-  // 3. 翻 pending(新條目 + 上次失敗重設的 + 2.5 補抓成功的),不論 304 與否都執行
+  // 2.7 失敗文章自動重試:退避時間已到、次數未滿的 error 重設回 pending,交給步驟 3 一起翻。
+  //     用 resetToPending(不歸零失敗次數)—— 歸零是手動「重翻」的語意。
+  const dueRetries = ctx.entries.errorRetryCandidates(feed.id, MAX_TRANSLATE_ATTEMPTS)
+    .filter((e) => isTranslateRetryDue(e, now()))
+    .slice(0, MAX_ERROR_RETRIES_PER_RUN);
+  for (const e of dueRetries) ctx.entries.resetToPending(e.id);
+  if (dueRetries.length) log('info', 'translate', `自動重試先前翻譯失敗的 ${dueRetries.length} 篇`);
+
+  // 3. 翻 pending(新條目 + 失敗重設的 + 2.5 補抓成功的 + 2.7 自動重試的),不論 304 與否都執行
   const opts = buildTranslateOpts(ctx, feed, apiKey);
   const pending = ctx.entries.pendingByFeed(feed.id);
   let translated = 0, failed = 0;
@@ -209,20 +237,28 @@ async function processFeedLocked(ctx, feed, deps) {
         `模型 ${usageModel}｜in ${r.usage?.inputTokens || 0} out ${r.usage?.outputTokens || 0}`);
       translated++;
     } catch (err) {
-      ctx.entries.markError(e.id, err);
-      log('error', 'translate', `翻譯失敗:${e.title || '(無標題)'}`, String(err?.message || err));
+      const failedEntry = ctx.entries.markError(e.id, err, now());
+      const gaveUp = failedEntry.translation_retries >= MAX_TRANSLATE_ATTEMPTS;
+      log('error', 'translate',
+        `翻譯失敗(第 ${failedEntry.translation_retries} 次,${gaveUp ? '已達上限不再自動重試' : '稍後自動重試'}):${e.title || '(無標題)'}`,
+        String(err?.message || err));
       failed++;
     }
   }
 
   // 4. 清舊文章:只留最新 N 篇(304 沒新文章,跳過;N=0 不限制)。
-  //    保留數取 max(N, 本次抓到篇數):若來源 XML 本身列出超過 N 篇,砍掉的下次抓取
-  //    會被當新文章重插 → 重翻 → 再砍,token 無限燒;永不刪「來源還在列的文章」即可斷這個迴圈。
+  //    砍掉「來源還在列的文章」下次抓取會被當新文章重插 → 重翻 → 再砍,token 無限燒。
+  //    兩道防線:(a) 保留數取 max(N, 本次抓到篇數) —— 來源 XML 列出超過 N 篇時不超砍;
+  //    (b) 本次列出的 guid 明確傳給 prune 保護 —— (a) 只保證「篇數」不保證「是那幾篇」,
+  //    精選類 feed 重新列出舊日期文章時,日期排序會把它擠出 keep 之外。
   let pruned = 0;
-  const capRaw = deps.maxEntriesPerFeed ?? ctx.settings.get('maxEntriesPerFeed', DEFAULT_MAX_ENTRIES_PER_FEED);
+  // 上限來源優先序:測試注入 → 該 feed 自訂(feeds.max_entries,null = 繼承)→ 全域設定 → 內建預設
+  const capRaw = deps.maxEntriesPerFeed ?? feed.max_entries
+    ?? ctx.settings.get('maxEntriesPerFeed', DEFAULT_MAX_ENTRIES_PER_FEED);
   const cap = Number(capRaw);
   if (!res.notModified && Number.isFinite(cap) && cap > 0) {
-    pruned = ctx.entries.pruneByFeed(feed.id, Math.max(cap, res.items.length));
+    const listedGuids = res.items.map((it) => it.guid).filter(Boolean);
+    pruned = ctx.entries.pruneByFeed(feed.id, Math.max(cap, res.items.length), listedGuids);
     if (pruned) log('info', 'system', `清理舊文章:${feed.title || feed.source_url} 刪除 ${pruned} 篇(保留最新 ${cap} 篇)`);
   }
 

@@ -221,6 +221,23 @@ describe('feeds API', () => {
     expect((await app.inject({ method: 'GET', url: '/api/feeds' })).json()).toHaveLength(0);
   });
 
+  it('max_entries:POST / PATCH 可設定;空字串與 null = 繼承;非法值 400 不落庫', async () => {
+    // 驗 API 層正規化 + 範圍。不驗 pipeline 採用(pipeline.test.js)與表單送出的形狀(frontend.test.js)
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', max_entries: 1000 } })).json();
+    expect(f.max_entries).toBe(1000);
+    const patch = (payload) => app.inject({ method: 'PATCH', url: `/api/feeds/${f.id}`, payload });
+    expect((await patch({ max_entries: 0 })).json().max_entries).toBe(0);      // 0 = 不限制,不能被當成「沒填」
+    expect((await patch({ max_entries: '' })).json().max_entries).toBeNull();
+    expect((await patch({ max_entries: '250' })).json().max_entries).toBe(250); // 字串數字正規化
+    expect((await patch({ max_entries: null })).json().max_entries).toBeNull();
+    for (const bad of [-1, 1.5, 10001, 'abc']) {
+      expect((await patch({ max_entries: bad })).statusCode).toBe(400);
+    }
+    expect((await app.inject({ method: 'GET', url: `/api/feeds/${f.id}` })).json().max_entries).toBeNull(); // 非法值沒落庫
+    const badPost = await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex2.com/feed', max_entries: -5 } });
+    expect(badPost.statusCode).toBe(400);
+  });
+
   it('GET 不存在的 feed → 404', async () => {
     const r = await app.inject({ method: 'GET', url: '/api/feeds/999' });
     expect(r.statusCode).toBe(404);

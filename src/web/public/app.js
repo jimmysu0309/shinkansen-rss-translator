@@ -259,6 +259,24 @@ async function loadFeeds() {
   } catch (e) { toast('載入 feeds 失敗:' + e.message); }
 }
 
+// 失敗文章的自動重試狀態(次數上限來自 /api/defaults,與 pipeline 同一份常數)
+function retryStatusText(en) {
+  const max = DEFAULTS.maxTranslateAttempts;
+  const n = en.translation_retries || 0;
+  if (!max) return '';
+  return n >= max ? `已失敗 ${n}/${max} 次,不再自動重試(可按「重翻」重來)` : `已失敗 ${n}/${max} 次,稍後自動重試`;
+}
+
+// 逐 feed 文章上限:空白 = null(繼承全域);其餘交給伺服器驗證範圍(單一資料源,前端不重寫一套規則)
+function parseMaxEntries(raw) {
+  const t = String(raw ?? '').trim();
+  return t === '' ? null : Number(t);
+}
+// 全域上限目前值(placeholder 顯示用):設定頁的輸入框就是前端唯一持有的那份
+function globalMaxEntries() {
+  return $('#s-maxentries')?.value || DEFAULTS.maxEntriesPerFeed;
+}
+
 async function loadFeedsInner() {
   const feeds = await api('GET', '/api/feeds'); // 列表已附各狀態篇數(counts),免逐 feed 撈詳情
   const list = $('#feed-list');
@@ -289,6 +307,7 @@ async function loadFeedsInner() {
         <span>引擎:${engineLabel(f.engine)}</span>
         ${f.engine !== 'google' && f.engine !== 'opencc' ? `<span>模型:${f.model ? esc(f.model) : '繼承全域'}</span>` : ''}
         ${f.fetch_article ? '<span>全文抓取</span>' : ''}
+        ${f.max_entries != null ? `<span>上限:${f.max_entries === 0 ? '不限制' : f.max_entries + ' 篇'}</span>` : ''}
         ${f.last_error ? `<span class="badge error">抓取錯誤</span>` : ''}
       </div>
 
@@ -300,6 +319,9 @@ async function loadFeedsInner() {
           <label>標題<input type="text" data-f="title" value="${esc(f.title || '')}"></label>
           <label>引擎<select data-f="engine">${DEFAULTS.engines.map(o => `<option value="${esc(o.id)}"${o.id === (f.engine || 'gemini') ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>
           <label>Gemini 模型<select data-f="model">${optionsHtml(DEFAULTS.models, f.model)}</select></label>
+          <label>文章上限<small class="hint-inline"><strong>空白</strong> = 繼承全域・<strong>0</strong> = 不限制</small>
+            <input type="number" data-f="max_entries" min="0" max="10000" step="10" value="${f.max_entries ?? ''}" placeholder="繼承全域(${esc(globalMaxEntries())})">
+          </label>
         </div>
         <div class="edit-row">
           <label class="checkbox-label"><input type="checkbox" data-f="fetch_article" ${f.fetch_article ? 'checked' : ''}><span>抓取全文</span></label>
@@ -347,6 +369,7 @@ $('#feed-list').addEventListener('click', async (e) => {
               }<button class="ghost err-dismiss" data-act="dismiss" data-eid="${en.id}" title="放棄翻譯：清除失敗狀態，RSS 改出原文，不再重試">清除</button>
             </div>
             <div class="err-msg">${esc(en.translation_error || '(無錯誤訊息)')}</div>
+            <div class="err-retry">${esc(retryStatusText(en))}</div>
           </div>`).join('')
         : '<div class="err-msg">目前沒有失敗的文章（可能剛重翻成功，重新整理即可）</div>';
       box.hidden = false;
@@ -390,6 +413,7 @@ $('#feed-list').addEventListener('click', async (e) => {
         engine: val('engine').value,          // engine 一律具體值(NOT NULL)
         model: val('model').value || null,    // model 可為 null = 繼承全域
         fetch_article: val('fetch_article').checked,
+        max_entries: parseMaxEntries(val('max_entries').value), // 空白 → null = 繼承全域
         // enabled 不在這裡:卡片右上的 toggle 是唯一入口(單一資料源)
       };
       await api('PATCH', `/api/feeds/${id}`, patch);
