@@ -10,7 +10,10 @@ import Fastify from 'fastify';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildFeedXml } from '../pipeline/rss-output.js';
-import { processFeed, isFeedInFlight, getLastRun, DEFAULT_MAX_ENTRIES_PER_FEED, MAX_TRANSLATE_ATTEMPTS } from '../pipeline/run.js';
+import {
+  processFeed, isFeedInFlight, getLastRun, DEFAULT_MAX_ENTRIES_PER_FEED, MAX_TRANSLATE_ATTEMPTS,
+  DEFAULT_DAILY_TOKEN_BUDGET, getTokenBudgetStatus,
+} from '../pipeline/run.js';
 import { fetchFeed as defaultFetchFeed } from '../pipeline/fetch-feed.js';
 import {
   DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, ENGINES,
@@ -54,11 +57,11 @@ const SECRET_KEYS = new Set(['apiKey']);
 const SETTING_KEYS = new Set([
   'apiKey', 'engine', 'model', 'targetLanguage', 'systemPrompt', 'forbiddenTerms',
   'fixedGlossary', 'maxUnitsPerBatch', 'maxCharsPerBatch', 'temperature',
-  'logRetentionDays', 'pollCron', 'modelPricingOverrides', 'maxEntriesPerFeed',
+  'logRetentionDays', 'pollCron', 'modelPricingOverrides', 'maxEntriesPerFeed', 'dailyTokenBudget',
 ]);
 
 // 白名單只擋「鍵」;值也要驗型別 —— 亂型別會一路傳進翻譯管線(NaN 批次上限)或前端模板(XSS)。
-const NUMERIC_SETTINGS = new Set(['maxUnitsPerBatch', 'maxCharsPerBatch', 'temperature', 'logRetentionDays', 'maxEntriesPerFeed']);
+const NUMERIC_SETTINGS = new Set(['maxUnitsPerBatch', 'maxCharsPerBatch', 'temperature', 'logRetentionDays', 'maxEntriesPerFeed', 'dailyTokenBudget']);
 const STRING_SETTINGS = new Set(['apiKey', 'engine', 'model', 'targetLanguage', 'systemPrompt', 'pollCron']);
 const ARRAY_SETTINGS = new Set(['forbiddenTerms', 'fixedGlossary']);
 
@@ -230,6 +233,7 @@ export function buildServer(ctx, opts = {}) {
     logRetentionDays: DEFAULT_LOG_RETENTION_DAYS,
     maxEntriesPerFeed: DEFAULT_MAX_ENTRIES_PER_FEED,
     maxTranslateAttempts: MAX_TRANSLATE_ATTEMPTS, // 失敗清單顯示「已失敗 n/N 次」用
+    dailyTokenBudget: DEFAULT_DAILY_TOKEN_BUDGET,
     logLevels: ['info', 'warn', 'error'],
     logCategories: ['fetch', 'translate', 'refresh', 'opml', 'system'],
     pollCron: DEFAULT_POLL_CRON,
@@ -263,6 +267,10 @@ export function buildServer(ctx, opts = {}) {
     }
     return applied;
   };
+
+  // 每日 token 預算現況 { budget, used, exceeded } —— 與 pipeline 的停翻判斷同一個函式(單一資料源)。
+  // 前端用來在 Feeds 頁顯示「已達預算、翻譯暫停」橫幅:保險絲跳了一定要看得見,否則又是「feed 為什麼沒翻」之謎。
+  app.get('/api/budget', async () => getTokenBudgetStatus(ctx));
 
   // ─── 設定 API ───
   app.get('/api/settings', async () => publicSettings());

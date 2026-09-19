@@ -411,6 +411,27 @@ describe('logs DAO', () => {
     rmSync(tmp, { force: true });
   });
 
+  it('translation_ledger:guid 或 url 任一相符都算同一篇;只算視窗內;隨 feed 刪除而清、不隨 entries 清掉而消失', () => {
+    // 驗帳本 DAO。不驗 pipeline 何時記帳 / 何時拒翻(pipeline.test.js)
+    const f = ctx.feeds.create({ source_url: 'https://led.com/feed' });
+    const { entry } = ctx.entries.upsertNew({ feed_id: f.id, guid: 'g1', url: 'https://led.com/a' });
+    ctx.ledger.record({ feedId: f.id, guid: 'g1', url: 'https://led.com/a', ts: 1000 });
+    ctx.ledger.record({ feedId: f.id, guid: 'g1-changed', url: 'https://led.com/a', ts: 2000 }); // guid 變了、url 沒變
+    ctx.ledger.record({ feedId: f.id, guid: 'other', url: null, ts: 2000 });
+    const q = (guid, url, since = 0) => ctx.ledger.countSince({ feedId: f.id, guid, url, since });
+    expect(q('g1', 'https://led.com/a')).toBe(2);
+    expect(q('g1', null)).toBe(1);            // 沒 url 就只比 guid(null 不能互相配對)
+    expect(q('other', null)).toBe(1);
+    expect(q('g1', 'https://led.com/a', 1500)).toBe(1); // 視窗外的不算
+
+    ctx.entries.deleteByFeed(f.id); // entries 被清掉:帳本要留著 —— 這正是它存在的理由
+    expect(entry.id).toBeGreaterThan(0);
+    expect(q('g1', 'https://led.com/a')).toBe(2);
+    expect(ctx.ledger.pruneBefore(1500)).toBe(1);
+    ctx.feeds.remove(f.id);
+    expect(ctx.db.prepare('SELECT count(*) n FROM translation_ledger').get().n).toBe(0);
+  });
+
   it('遷移:舊 DB 的 entries 補上 translation_retries(0)/ translation_failed_at(null),舊 error 仍是重試候選', () => {
     // 驗 schema 遷移 + 升級前就卡住的 error 文章升級後會被自動重試撿到。不驗退避判斷(pipeline.test.js)
     const tmp = join(mkdtempSync(join(tmpdir(), 'sf-migrate-tr-')), 'old.sqlite');

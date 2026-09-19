@@ -132,6 +132,7 @@ async function loadSettings() {
   $('#s-temp').value = s.temperature ?? DEFAULTS.temperature;
   $('#s-logdays').value = s.logRetentionDays ?? DEFAULTS.logRetentionDays;
   $('#s-maxentries').value = s.maxEntriesPerFeed ?? DEFAULTS.maxEntriesPerFeed;
+  $('#s-tokenbudget').value = s.dailyTokenBudget ?? DEFAULTS.dailyTokenBudget;
   // 更新頻率下拉
   const pc = $('#s-pollcron');
   pc.innerHTML = DEFAULTS.pollCronOptions.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
@@ -156,6 +157,7 @@ $('#save-settings').addEventListener('click', async () => {
       temperature: Number($('#s-temp').value),
       logRetentionDays: Number($('#s-logdays').value),
       maxEntriesPerFeed: Number($('#s-maxentries').value),
+      dailyTokenBudget: Number($('#s-tokenbudget').value),
       pollCron: $('#s-pollcron').value,
       systemPrompt: $('#s-prompt').value,
       forbiddenTerms: textToTerms($('#s-forbidden').value),
@@ -166,6 +168,7 @@ $('#save-settings').addEventListener('click', async () => {
     await api('PUT', '/api/settings', payload);
     if (key) { updateApiKeyPill(true); $('#s-apikey').value = ''; }
     $('#save-status').textContent = '✓ 已儲存';
+    loadBudget(); // 預算剛改 → 橫幅 / 已用量立即反映
     setTimeout(() => ($('#save-status').textContent = ''), 2000);
   } catch (e) { toast('儲存失敗:' + e.message); }
 });
@@ -250,6 +253,7 @@ function lastRunToast(lr, prefix) {
   if (lr.added !== undefined) parts.push(`新增 ${lr.added} 篇`);
   parts.push(`翻譯 ${lr.translated} 篇`);
   if (lr.failed) parts.push(`失敗 ${lr.failed}`);
+  if (lr.budgetSkipped) parts.push(`已達每日 token 預算,${lr.budgetSkipped} 篇暫停`);
   return `${prefix}:${parts.join('、')}`;
 }
 
@@ -257,6 +261,20 @@ async function loadFeeds() {
   try {
     await loadFeedsInner();
   } catch (e) { toast('載入 feeds 失敗:' + e.message); }
+}
+
+// 每日 token 預算現況:設定頁顯示已用量;超過時 Feeds 頁頂端出橫幅(保險絲跳了要看得見)。
+// 失敗不擋主流程 —— 這只是狀態顯示。
+async function loadBudget() {
+  try {
+    const b = await api('GET', '/api/budget');
+    $('#s-budget-used').textContent = fmt(b.used);
+    const banner = $('#budget-banner');
+    banner.hidden = !b.exceeded;
+    if (b.exceeded) {
+      banner.textContent = `已達每日 token 預算(過去 24 小時已用 ${fmt(b.used)} / 預算 ${fmt(b.budget)}),Gemini 翻譯暫停。文章保持待翻,額度恢復後自動續翻;要立刻恢復請到「設定」調高預算。`;
+    }
+  } catch { /* 狀態顯示失敗不影響操作 */ }
 }
 
 // 失敗文章的自動重試狀態(次數上限來自 /api/defaults,與 pipeline 同一份常數)
@@ -278,6 +296,7 @@ function globalMaxEntries() {
 }
 
 async function loadFeedsInner() {
+  loadBudget();
   const feeds = await api('GET', '/api/feeds'); // 列表已附各狀態篇數(counts),免逐 feed 撈詳情
   const list = $('#feed-list');
   if (!feeds.length) { list.innerHTML = '<p class="hint">還沒有 feed。用上方表單新增第一個。</p>'; return; }

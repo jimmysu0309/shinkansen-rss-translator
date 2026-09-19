@@ -21,7 +21,7 @@ const DEFAULTS = {
   model: 'gemini-3.1-flash-lite', models: [{ id: 'gemini-3.1-flash-lite', label: 'Lite' }],
   engines: [{ id: 'gemini', label: 'Gemini' }, { id: 'google', label: 'Google' }],
   systemPrompt: 'sp', forbiddenTerms: [{ forbidden: '視頻', replacement: '影片' }], targetLanguage: 'zh-TW',
-  maxUnitsPerBatch: 50, maxCharsPerBatch: 3500, temperature: 1, logRetentionDays: 7, maxEntriesPerFeed: 300, maxTranslateAttempts: 5,
+  maxUnitsPerBatch: 50, maxCharsPerBatch: 3500, temperature: 1, logRetentionDays: 7, maxEntriesPerFeed: 300, maxTranslateAttempts: 5, dailyTokenBudget: 0,
   logLevels: ['info', 'warn', 'error'], logCategories: ['fetch', 'translate'],
   pollCron: '*/15 * * * *', pollCronOptions: [{ value: '*/15 * * * *', label: '每 15 分鐘' }, { value: '', label: '關閉' }],
   modelPricing: { 'gemini-3.1-flash-lite': { inputPerMTok: 0.25, outputPerMTok: 1.5 } }, hasApiKey: true,
@@ -46,11 +46,13 @@ const USAGE = {
   pending: 0,
 };
 
+let BUDGET = { budget: 0, used: 561304, exceeded: false };
 function mockFetch(url) {
   const u = String(url);
   const json = (d) => Promise.resolve({ ok: true, headers: { get: () => 'application/json' }, json: () => Promise.resolve(d), text: () => Promise.resolve('') });
   if (u.endsWith('/api/defaults')) return json(DEFAULTS);
   if (u.endsWith('/api/backup/import')) return json({ settings: 1, feedsAdded: 2, feedsUpdated: 0, feedsSkipped: 0 });
+  if (u.endsWith('/api/budget')) return json(BUDGET);
   if (u.endsWith('/api/settings')) return json({});
   if (u.includes('/api/logs')) return json({ logs: [], total: 0 });
   if (u.endsWith('/api/feeds/2/errors')) return json(FEED2_ERRORS);
@@ -308,6 +310,36 @@ describe('前端:逐 feed 文章上限', () => {
     expect(await save(document.querySelector('#feed-list .feed-item[data-id="2"]'), '')).toBeNull();
     expect(await save(document.querySelector('#feed-list .feed-item[data-id="1"]'), '0')).toBe(0);
     expect(await save(document.querySelector('#feed-list .feed-item[data-id="1"]'), '1000')).toBe(1000);
+  });
+});
+
+describe('前端:每日 token 預算', () => {
+  // 驗:保險絲跳了使用者看得見(橫幅)、設定頁顯示已用量、儲存送數字。不驗橫幅的視覺樣式(jsdom 不排版)。
+  it('沒超過 → 橫幅隱藏,設定頁顯示已用量(K/M 縮寫)', async () => {
+    BUDGET = { budget: 3000000, used: 561304, exceeded: false };
+    await boot();
+    expect(document.querySelector('#budget-banner').hidden).toBe(true);
+    expect(document.querySelector('#s-budget-used').textContent).toBe('561.3K');
+  });
+
+  it('超過 → Feeds 頁頂端出橫幅,寫明已用 / 預算與怎麼恢復', async () => {
+    BUDGET = { budget: 3000000, used: 3200000, exceeded: true };
+    await boot();
+    const b = document.querySelector('#budget-banner');
+    expect(b.hidden).toBe(false);
+    expect(b.textContent).toContain('3.2M');
+    expect(b.textContent).toContain('3.0M');
+    expect(b.textContent).toContain('自動續翻');
+    BUDGET = { budget: 0, used: 0, exceeded: false };
+  });
+
+  it('儲存設定帶 dailyTokenBudget(數字)', async () => {
+    await boot();
+    document.querySelector('#s-tokenbudget').value = '3000000';
+    document.querySelector('#save-settings').click();
+    await new Promise((r) => setTimeout(r, 30));
+    const put = global.fetch.mock.calls.find((c) => c[1]?.method === 'PUT' && String(c[0]).endsWith('/api/settings'));
+    expect(JSON.parse(put[1].body).dailyTokenBudget).toBe(3000000);
   });
 });
 

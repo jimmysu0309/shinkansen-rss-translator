@@ -7,6 +7,7 @@
 //   ✓ conditional GET:304 不重抓
 //   ✓ 單篇翻譯失敗不影響其他篇(逐篇 try/catch)
 //   ✓ 全文抓取失敗:先用摘要翻出去 → 後續刷新補抓 → 上限 MAX_FULL_TEXT_ATTEMPTS 次後放棄
+//   ✓ 花費保險絲:同一篇 24h 內重翻次數上限、每日 token 預算(超過留 pending)
 //   ✓ 翻譯失敗:退避後自動重試 → 上限 MAX_TRANSLATE_ATTEMPTS 次後留在 error 等人工
 //   ✗ 不驗:真實網路 / 真實 Gemini(用注入的 fake;真實走整合測試 / 部署)
 
@@ -36,6 +37,29 @@ export const MAX_FULL_TEXT_ATTEMPTS = 3;
 export const MAX_TRANSLATE_ATTEMPTS = 5;
 export const TRANSLATE_RETRY_BACKOFF_MS = [10 * 60_000, 60 * 60_000, 4 * 3600_000, 12 * 3600_000];
 export const MAX_ERROR_RETRIES_PER_RUN = 3;
+
+// ── 兩道花費保險絲 ──
+// 2026-09 事故的教訓:每一次翻譯「單看」都成功,所以 log 零 warn,最後是 Google 端的 spend cap 才停下來。
+// 個別 bug 修掉之後,仍需要不依賴「知道 bug 長怎樣」的通用防線:
+//   (1) 重翻保險絲:同一篇(feed + guid 或 url)在 RETRANSLATE_WINDOW_MS 內最多成功翻
+//       MAX_TRANSLATIONS_PER_ARTICLE 次。正常上限是 2(摘要先翻 + 補抓全文後重翻),第 3 次留作餘裕;
+//       再多就是某種迴圈 → 拒翻並記 error。手動「重翻 / 全部重譯」會清帳本,不受限。
+//       最壞情況因此是「每篇每 24 小時 3 次」,而不是每 15 分鐘 1 次(96 次 / 天)。
+//   (2) 每日 token 預算:過去 24 小時(滾動視窗,免時區問題)input + output token 達設定值就停翻
+//       會花 token 的引擎;文章留在 pending(不是 error),視窗空出來自動續翻。0 = 不限制。
+export const MAX_TRANSLATIONS_PER_ARTICLE = 3;
+export const RETRANSLATE_WINDOW_MS = 24 * 3600_000;
+export const DEFAULT_DAILY_TOKEN_BUDGET = 0;
+const FREE_ENGINES = new Set(['google', 'opencc']); // 不花 token,不受預算限制
+
+/** 每日 token 預算現況(pipeline 判斷與 API / UI 顯示共用這一份) */
+export function getTokenBudgetStatus(ctx, nowMs = Date.now()) {
+  const raw = Number(ctx.settings.get('dailyTokenBudget', DEFAULT_DAILY_TOKEN_BUDGET));
+  const budget = Number.isFinite(raw) && raw > 0 ? raw : 0;
+  const st = ctx.usage.getStats({ from: nowMs - RETRANSLATE_WINDOW_MS });
+  const used = (st.input_tokens || 0) + (st.output_tokens || 0);
+  return { budget, used, exceeded: budget > 0 && used >= budget };
+}
 
 /** 這篇失敗文章的退避時間到了沒(translation_failed_at 為 null = 升級前的舊 error,立即可試) */
 export function isTranslateRetryDue(entry, nowMs) {
@@ -198,8 +222,28 @@ async function processFeedLocked(ctx, feed, deps) {
   // 3. 翻 pending(新條目 + 失敗重設的 + 2.5 補抓成功的 + 2.7 自動重試的),不論 304 與否都執行
   const opts = buildTranslateOpts(ctx, feed, apiKey);
   const pending = ctx.entries.pendingByFeed(feed.id);
-  let translated = 0, failed = 0;
-  for (const e of pending) {
+  let translated = 0, failed = 0, budgetSkipped = 0;
+  for (const [idx, e] of pending.entries()) {
+    // 保險絲 (2) 每日 token 預算:逐篇檢查(本輪前面幾篇翻完可能剛好用完)。超過就整批停,文章留 pending。
+    if (!FREE_ENGINES.has(opts.engine)) {
+      const b = getTokenBudgetStatus(ctx, now());
+      if (b.exceeded) {
+        budgetSkipped = pending.length - idx;
+        log('error', 'translate',
+          `已達每日 token 預算,暫停翻譯 ${budgetSkipped} 篇(保持待翻,額度恢復後自動續翻):${feed.title || feed.source_url}`,
+          `過去 24 小時已用 ${b.used} / 預算 ${b.budget}`);
+        break;
+      }
+    }
+    // 保險絲 (1) 重翻:同一篇近期已成功翻過太多次 → 拒翻(在抓全文之前擋,連抓取都省)
+    const recent = ctx.ledger.countSince({ feedId: feed.id, guid: e.guid, url: e.url, since: now() - RETRANSLATE_WINDOW_MS });
+    if (recent >= MAX_TRANSLATIONS_PER_ARTICLE) {
+      const msg = `重翻保險絲:這篇 24 小時內已成功翻譯 ${recent} 次,拒絕再翻(疑似重翻迴圈;確定要翻請按「重翻」)`;
+      ctx.entries.markError(e.id, msg, now());
+      log('error', 'translate', `${msg}:${e.title || '(無標題)'}`, `guid ${e.guid}`);
+      failed++;
+      continue;
+    }
     try {
       // 抓取全文(fetch_article):翻譯前先抓整篇正文覆蓋摘要
       let contentHtml = e.content_html;
@@ -233,6 +277,7 @@ async function processFeedLocked(ctx, feed, deps) {
       });
       const usageModel = { google: 'google-translate', opencc: 'opencc-s2twp' }[opts.engine] || opts.model;
       ctx.usage.log({ ts: now(), feedId: feed.id, entryId: e.id, model: usageModel, usage: r.usage || {} });
+      ctx.ledger.record({ feedId: feed.id, guid: e.guid, url: e.url, ts: now() });
       log('info', 'translate', `已翻譯:${e.title || '(無標題)'}`,
         `模型 ${usageModel}｜in ${r.usage?.inputTokens || 0} out ${r.usage?.outputTokens || 0}`);
       translated++;
@@ -262,7 +307,7 @@ async function processFeedLocked(ctx, feed, deps) {
     if (pruned) log('info', 'system', `清理舊文章:${feed.title || feed.source_url} 刪除 ${pruned} 篇(保留最新 ${cap} 篇)`);
   }
 
-  return { fetched: res.items.length, added, translated, failed, pruned, notModified: !!res.notModified };
+  return { fetched: res.items.length, added, translated, failed, pruned, budgetSkipped, notModified: !!res.notModified };
 }
 
 /**
@@ -273,6 +318,7 @@ async function processFeedLocked(ctx, feed, deps) {
  * @returns {number} 刪除筆數
  */
 export function pruneLogs(ctx, retentionDays, nowMs = Date.now()) {
+  ctx.ledger?.pruneBefore(nowMs - 2 * RETRANSLATE_WINDOW_MS); // 帳本只需涵蓋保險絲視窗;固定留 2 倍,與 log 保留天數無關
   const days = Number(retentionDays);
   if (!Number.isFinite(days) || days <= 0) return 0;
   const cutoff = nowMs - days * 86400_000;

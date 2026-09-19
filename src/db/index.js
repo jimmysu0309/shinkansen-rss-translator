@@ -10,7 +10,7 @@ import { SCHEMA_SQL } from './schema.js';
 
 /**
  * @param {string} [path=':memory:'] SQLite 檔路徑;測試用 ':memory:'
- * @returns {{db, settings, feeds, entries, usage}}
+ * @returns {{db, settings, feeds, entries, usage, logs, ledger}}
  */
 export function createDb(path = ':memory:') {
   const db = new Database(path);
@@ -26,6 +26,7 @@ export function createDb(path = ':memory:') {
     entries: makeEntriesDao(db),
     usage: makeUsageDao(db),
     logs: makeLogsDao(db),
+    ledger: makeLedgerDao(db),
   };
 }
 
@@ -354,6 +355,13 @@ function makeEntriesDao(db) {
     },
     /** 把某 feed 的 error 條目重設回 pending(供「重翻」);回傳重設筆數。手動重翻 = 失敗次數歸零,自動重試重新給滿額度 */
     resetErrorsToPending(feedId) {
+      // 手動「重翻」是使用者明確要求 → 連帶清掉這些文章的翻譯帳本,否則被重翻保險絲擋下的文章按了也沒用
+      db.prepare(`
+        DELETE FROM translation_ledger WHERE feed_id = @f AND (
+          guid IN (SELECT guid FROM entries WHERE feed_id = @f AND translation_status = 'error')
+          OR url IN (SELECT url FROM entries WHERE feed_id = @f AND translation_status = 'error' AND url IS NOT NULL)
+        )
+      `).run({ f: feedId });
       return db.prepare(
         "UPDATE entries SET translation_status='pending', translation_error=NULL, translation_retries=0, translation_failed_at=NULL WHERE feed_id=? AND translation_status='error'",
       ).run(feedId).changes;
@@ -363,6 +371,7 @@ function makeEntriesDao(db) {
      * 一併歸零 full_text_retries —— 「整 feed 重譯」語意是全部重來,先前放棄補抓的也重新給機會。
      */
     resetAllToPending(feedId) {
+      db.prepare('DELETE FROM translation_ledger WHERE feed_id = ?').run(feedId); // 同上:手動「全部重譯」不受保險絲限制
       return db.prepare(
         "UPDATE entries SET translation_status='pending', translation_error=NULL, full_text_retries=0, translation_retries=0, translation_failed_at=NULL WHERE feed_id=?",
       ).run(feedId).changes;
@@ -439,6 +448,27 @@ function makeUsageDao(db) {
     clear() {
       return db.prepare('DELETE FROM usage').run().changes;
     },
+  };
+}
+
+// ─── translation_ledger(重翻保險絲的帳本)───────────────────
+// 只有兩個問題要答:「這篇最近被成功翻過幾次」與「記一筆」。識別用 guid 或 url 任一相符 ——
+// 來源 guid 不穩(每次抓取都變)時,url 通常還是同一個,兩個都比才擋得住那類重翻。
+function makeLedgerDao(db) {
+  const insert = db.prepare('INSERT INTO translation_ledger (feed_id, guid, url, ts) VALUES (@feed_id, @guid, @url, @ts)');
+  const count = db.prepare(`
+    SELECT COUNT(*) n FROM translation_ledger
+    WHERE feed_id = @feed_id AND ts > @since AND (guid = @guid OR (@url IS NOT NULL AND url = @url))
+  `);
+  const prune = db.prepare('DELETE FROM translation_ledger WHERE ts < ?');
+  return {
+    record({ feedId, guid, url = null, ts }) {
+      insert.run({ feed_id: feedId, guid, url: url || null, ts: ts ?? Date.now() });
+    },
+    countSince({ feedId, guid, url = null, since }) {
+      return count.get({ feed_id: feedId, guid, url: url || null, since }).n;
+    },
+    pruneBefore(ts) { return prune.run(ts).changes; },
   };
 }
 

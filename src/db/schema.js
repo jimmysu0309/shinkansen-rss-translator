@@ -79,6 +79,21 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE INDEX IF NOT EXISTS idx_usage_ts   ON usage(ts);
 CREATE INDEX IF NOT EXISTS idx_usage_feed ON usage(feed_id, ts);
 
+-- 翻譯帳本(重翻保險絲):每次「成功翻譯」記一列,以 feed + guid / url 識別文章。
+-- 刻意不掛 entries(id):entries 被清掉重插會換 id,而這張表要抓的正是「同一篇被反覆重翻」
+-- (2026-09 Atlantic 事故:單篇 6 天被翻 85 次,每次單看都是成功,log 零 warn)。
+CREATE TABLE IF NOT EXISTS translation_ledger (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  feed_id   INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+  guid      TEXT NOT NULL,
+  url       TEXT,
+  ts        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_feed_guid ON translation_ledger(feed_id, guid, ts);
+CREATE INDEX IF NOT EXISTS idx_ledger_feed_url  ON translation_ledger(feed_id, url, ts);
+CREATE INDEX IF NOT EXISTS idx_ledger_ts        ON translation_ledger(ts);
+
 CREATE TABLE IF NOT EXISTS logs (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   ts        INTEGER NOT NULL,

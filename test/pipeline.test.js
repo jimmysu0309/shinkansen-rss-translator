@@ -10,6 +10,7 @@ import { parseFeedXml, fetchFeed } from '../src/pipeline/fetch-feed.js';
 import {
   processFeed, processAllFeeds, pruneLogs, getLastRun, MAX_FULL_TEXT_ATTEMPTS,
   MAX_TRANSLATE_ATTEMPTS, TRANSLATE_RETRY_BACKOFF_MS, MAX_ERROR_RETRIES_PER_RUN, isTranslateRetryDue,
+  MAX_TRANSLATIONS_PER_ARTICLE, RETRANSLATE_WINDOW_MS, getTokenBudgetStatus,
 } from '../src/pipeline/run.js';
 import { translateEntry } from '../src/pipeline/translate-entry.js';
 import { createDb } from '../src/db/index.js';
@@ -295,6 +296,81 @@ describe('processFeed 編排', () => {
     });
     expect(r.added).toBe(0);
     expect(ctx.entries.listByFeed(feed.id)).toHaveLength(0);
+  });
+
+  // ── 花費保險絲 ──
+  // 驗:不管重翻是哪種 bug 造成的(這裡用「刪掉 entry 讓它重插」與「guid 每次都變」兩種模擬),
+  //     同一篇 24h 內的成功翻譯次數都有上限;每日 token 預算超過就停、文章留 pending、視窗過了自動續翻。
+  // 不驗:預算數字設多少才合理(那是營運判斷);也不驗供應商端實際計費是否等於 usage 表加總。
+  describe('花費保險絲', () => {
+    let t, calls;
+    const translate = async (e) => { calls++; return fakeTranslate(e); };
+    const run = (items, extra = {}) => processFeed(ctx, feed, { apiKey: 'x', now: () => t, fetchFeed: makeFetch(items), translateEntry: translate, ...extra });
+    beforeEach(() => { t = 10 * RETRANSLATE_WINDOW_MS; calls = 0; });
+
+    it('重翻保險絲:同一篇被反覆刪除重插(未知 bug 的通用形狀)→ 最多翻 MAX 次,之後拒翻並記 error', async () => {
+      const items = [{ guid: 'loop', title: 'Long read', url: 'https://ex.com/long', contentHtml: '<p>x</p>', published_at: 1 }];
+      for (let i = 0; i < 10; i++) {
+        await run(items);
+        ctx.entries.deleteByFeed(feed.id); // 模擬某種 bug 把它弄掉 → 下輪被當新文章
+        t += 15 * 60_000;
+      }
+      expect(calls).toBe(MAX_TRANSLATIONS_PER_ARTICLE); // 不是 10
+      expect(ctx.logs.query().some((l) => l.level === 'error' && /重翻保險絲/.test(l.message))).toBe(true);
+    });
+
+    it('重翻保險絲:guid 每次抓取都變、url 不變 → 靠 url 一樣擋得住', async () => {
+      for (let i = 0; i < 8; i++) {
+        await run([{ guid: `unstable-${i}`, title: 'Same', url: 'https://ex.com/same', contentHtml: '<p>x</p>', published_at: 1 }]);
+        t += 15 * 60_000;
+      }
+      expect(calls).toBe(MAX_TRANSLATIONS_PER_ARTICLE);
+    });
+
+    it('重翻保險絲:不誤傷正常流程 —— 不同文章各翻各的;被擋下的文章手動「重翻」立即解除', async () => {
+      await run([1, 2, 3, 4, 5].map((i) => ({ guid: `a${i}`, url: `https://ex.com/${i}`, title: `A${i}`, contentHtml: '<p>x</p>', published_at: i })));
+      expect(calls).toBe(5);
+
+      const one = [{ guid: 'loop', url: 'https://ex.com/loop', title: 'L', contentHtml: '<p>x</p>', published_at: 9 }];
+      for (let i = 0; i < MAX_TRANSLATIONS_PER_ARTICLE + 1; i++) { await run(one); if (i < MAX_TRANSLATIONS_PER_ARTICLE) ctx.entries.deleteByFeed(feed.id); }
+      const blocked = ctx.entries.getByGuid(feed.id, 'loop');
+      expect(blocked.translation_status).toBe('error');
+      expect(blocked.translation_error).toMatch(/重翻保險絲/);
+
+      calls = 0;
+      expect(ctx.entries.resetErrorsToPending(feed.id)).toBe(1); // 使用者按「重翻」= 明確覆寫
+      await run(one);
+      expect(calls).toBe(1);
+      expect(ctx.entries.getByGuid(feed.id, 'loop').translation_status).toBe('done');
+    });
+
+    it('每日 token 預算:用完就停、剩下的留 pending(不是 error);視窗過了自動續翻', async () => {
+      ctx.settings.set('dailyTokenBudget', 250); // fakeTranslate 每篇 120 token → 第 3 篇前就超過
+      const items = [1, 2, 3, 4, 5].map((i) => ({ guid: `b${i}`, title: `B${i}`, contentHtml: '<p>x</p>', published_at: i }));
+      const r = await run(items);
+      expect(r).toMatchObject({ translated: 3, failed: 0, budgetSkipped: 2 }); // 120×2=240 <250 → 第 3 篇照翻,360 ≥250 → 停
+      expect(ctx.entries.pendingByFeed(feed.id)).toHaveLength(2);
+      expect(getTokenBudgetStatus(ctx, t)).toMatchObject({ budget: 250, used: 360, exceeded: true });
+      expect(ctx.logs.query().some((l) => l.level === 'error' && /已達每日 token 預算/.test(l.message))).toBe(true);
+
+      t += 15 * 60_000;
+      expect((await run(items)).translated).toBe(0); // 還在視窗內:繼續停
+
+      t += RETRANSLATE_WINDOW_MS;
+      expect((await run(items)).translated).toBe(2); // 視窗滑過 → 自動補完
+      expect(ctx.entries.pendingByFeed(feed.id)).toHaveLength(0);
+    });
+
+    it('每日 token 預算:0 = 不限制(預設);免費引擎(Google / OpenCC)不受預算限制', async () => {
+      const items = [1, 2, 3].map((i) => ({ guid: `c${i}`, title: `C${i}`, contentHtml: '<p>x</p>', published_at: i }));
+      expect((await run(items)).translated).toBe(3); // 沒設預算
+      expect(getTokenBudgetStatus(ctx, t).exceeded).toBe(false);
+
+      ctx.settings.set('dailyTokenBudget', 1); // 已經超過
+      const g = ctx.feeds.create({ source_url: 'https://g.com/feed', engine: 'google' });
+      const r = await processFeed(ctx, g, { apiKey: 'x', now: () => t, fetchFeed: makeFetch(items), translateEntry: translate });
+      expect(r).toMatchObject({ translated: 3, budgetSkipped: 0 });
+    });
   });
 
   // ── 翻譯失敗自動重試 ──

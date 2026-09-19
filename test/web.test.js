@@ -808,6 +808,25 @@ describe('OPML 匯入:自家匯出檔防自我參照', () => {
   });
 });
 
+describe('每日 token 預算 API', () => {
+  // 驗設定可存 + /api/budget 回報的數字與 pipeline 判斷同源。不驗 pipeline 真的停翻(pipeline.test.js)
+  it('預設 0 = 不限制;存了預算後 /api/budget 依過去 24 小時 usage 回報 used / exceeded', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/defaults' })).json().dailyTokenBudget).toBe(0);
+    expect((await app.inject({ method: 'GET', url: '/api/budget' })).json()).toEqual({ budget: 0, used: 0, exceeded: false });
+
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { dailyTokenBudget: 1000 } });
+    const f = ctx.feeds.create({ source_url: 'https://b.com/feed' });
+    ctx.usage.log({ ts: Date.now(), feedId: f.id, entryId: null, model: 'gemini-3.1-flash-lite', usage: { inputTokens: 700, outputTokens: 400 } });
+    ctx.usage.log({ ts: Date.now() - 25 * 3600_000, feedId: f.id, entryId: null, model: 'gemini-3.1-flash-lite', usage: { inputTokens: 9999, outputTokens: 9999 } }); // 視窗外
+    expect((await app.inject({ method: 'GET', url: '/api/budget' })).json()).toEqual({ budget: 1000, used: 1100, exceeded: true });
+  });
+
+  it('亂型別的預算不落庫', async () => {
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { dailyTokenBudget: 'lots' } });
+    expect((await app.inject({ method: 'GET', url: '/api/settings' })).json().dailyTokenBudget).toBeUndefined();
+  });
+});
+
 describe('設定值型別清洗', () => {
   it('數值鍵收到非數字 → 不存;字串數字可收', async () => {
     await app.inject({ method: 'PUT', url: '/api/settings', payload: { maxUnitsPerBatch: 'abc', temperature: '0.5' } });
