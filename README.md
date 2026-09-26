@@ -57,9 +57,13 @@ src/
   pipeline/            抓取 / 切段回填 / 單篇翻譯 / 編排 / RSS 輸出 / OPML
   db/                  SQLite schema + DAO（settings/feeds/entries/usage/logs/ledger）+ 自動備份
   web/                 Fastify server + public/（單頁分頁式介面）
+  cli/translate.js     命令列單次翻譯（`npm run translate`，讀 .env 的 GEMINI_API_KEY）
+  pricing.js           token 用量換算美元（單價表沿用 vendor 的 model-pricing.js）
+  version.js           版本字串單一來源（頁面顯示 + 抓取 user-agent 共用）
   server.js            進入點（開 DB、載 .env、排程、listen）
+deploy/extra-ca.pem    額外信任的根憑證（compose 以 NODE_EXTRA_CA_CERTS 掛入）
 vendor/shinkansen/     Shinkansen 引擎（git submodule）
-test/                  vitest(233 tests)
+test/                  vitest(297 tests)
 ```
 
 ---
@@ -91,7 +95,7 @@ npm start
 跑測試：
 
 ```bash
-npm test          # 233 tests；有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
+npm test          # 297 tests；有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
 ```
 
 ---
