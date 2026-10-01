@@ -7,6 +7,7 @@
 //   ✓ 輸出 Atom XML,含正確篇數、譯文標題/內文、連結、日期
 //   ✓ pending/error 篇退回原文(不遺漏文章)
 //   ✓ 有 image_url 的篇章把封面圖前置成 hero(內文已有同圖 / 開頭已有圖則不加)
+//   ✓ 來源沒給連結的篇章,各自拿到互不相同且穩定的 <link>
 //   ✗ 不驗:Miniflux 端解析與實際版面(部署時實測)
 
 import { Feed } from 'feed';
@@ -41,7 +42,7 @@ export function buildFeedXml({ feed, entries, selfUrl }) {
     out.addItem({
       title: (done && e.title_translated) || e.title || '(無標題)',
       id: e.guid,
-      link: e.url || feed.source_url,
+      link: entryLink(e, feed),
       // 作者沒帶會讓下游(Miniflux → Readwise)整條丟失作者
       author: e.author ? [{ name: convertAuthor(e.author) }] : undefined,
       content: withHero((done && e.content_translated) || e.content_html || '', e.image_url),
@@ -50,6 +51,25 @@ export function buildFeedXml({ feed, entries, selfUrl }) {
   }
 
   return out.atom1();
+}
+
+// 每篇的 <link>。來源有給就原樣用;沒給的(LetterFeed 把 email 電子報轉成的 Atom entry
+// 就沒有 <link>,上游 issue #19 未解)用「來源 feed 網址 + #guid」。
+//
+// 為什麼不能直接退回 feed.source_url(2026-10-01 以前的做法):那樣同一條 feed 的每一篇
+// 都拿到同一個網址,下游凡是「以網址識別文章」的地方全部會撞在一起 —— Readwise Reader
+// 以網址去重只收得下第一篇、每日精選的已讀同步會把別期一起標已讀。
+// 接上 #guid 之後每篇各不相同,而且仍然誠實地指向它的出處(來源 feed 裡的這一則),
+// 不憑空編一條不存在的路徑。guid 是 entries 表的 NOT NULL 欄,正常不會缺;真的缺就只能退回舊行為。
+//
+// ※ 這條保證的是「同一 feed 內各篇網址互不相同、同一篇每次輸出都一樣」,
+//   不保證這個網址用瀏覽器開得了(來源 feed 若是內網位址,它本來就開不了)。
+export function entryLink(e, feed) {
+  if (e.url) return e.url;
+  const base = feed.source_url || '';
+  if (!e.guid) return base;
+  const hash = base.indexOf('#');
+  return `${hash === -1 ? base : base.slice(0, hash)}#${encodeURIComponent(e.guid)}`;
 }
 
 // 封面圖前置成 hero。做在輸出層(而非入庫或翻譯前)是刻意的:翻譯管線的

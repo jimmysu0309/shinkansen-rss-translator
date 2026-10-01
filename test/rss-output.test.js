@@ -3,9 +3,11 @@
 // 訊號層次:
 //   ✓ Atom 結構、篇數、譯文標題/內文出現在輸出
 //   ✓ pending 篇退回原文(不遺漏)
+//   ✓ 沒有連結的篇章各自拿到不同且穩定的 <link>
 //   ✗ 不驗:Miniflux 端實際解析(部署驗)
+//   ✗ 不驗:Miniflux 會不會把既有文章的網址更新成新的(部署後查 DB)
 import { describe, it, expect } from 'vitest';
-import { buildFeedXml, withHero } from '../src/pipeline/rss-output.js';
+import { buildFeedXml, withHero, entryLink } from '../src/pipeline/rss-output.js';
 
 const feed = { title: 'Tech Blog', source_url: 'https://ex.com/feed' };
 
@@ -82,6 +84,47 @@ describe('buildFeedXml', () => {
     // feed 套件把內文包 CDATA,所以 HTML 是原樣不轉義的
     expect(xml).toContain('<figure><img src="https://cdn/cover.jpg" alt="" /></figure><p>譯文</p>');
     expect((xml.match(/figure/g) || []).length).toBe(2); // 只有第一篇有(開頭+結尾標籤)
+  });
+
+  it('來源沒給連結的篇章:每篇 <link> 各不相同(不再全部退回同一條來源網址)', () => {
+    // 形狀取自 afu 上 LetterFeed → Benedict's Newsletter 的真實資料(2026-10-01):url 一律 null
+    const lf = { title: "Benedict's Newsletter", source_url: 'http://letterfeed-backend:8000/feeds/benedicts-newsletter' };
+    const entries = [
+      { guid: 'urn:letterfeed:entry:AC_WbKA7eioOUjMSox1x-', url: null, translation_status: 'done',
+        title_translated: '第 662 期', content_translated: '<p>a</p>', published_at: 2 },
+      { guid: 'urn:letterfeed:entry:CnNt1hyz49s38spbiNG4h', url: null, translation_status: 'done',
+        title_translated: '第 661 期', content_translated: '<p>b</p>', published_at: 1 },
+    ];
+    const xml = buildFeedXml({ feed: lf, entries, selfUrl: 'http://shinkansen-rss:8088/rss/25' });
+    // 只看 entry 裡的 link(feed 層另有 alternate / self 兩條)
+    const links = xml.split('<entry>').slice(1).map((s) => s.match(/<link href="([^"]+)"/)[1]);
+    expect(links).toEqual([
+      'http://letterfeed-backend:8000/feeds/benedicts-newsletter#urn%3Aletterfeed%3Aentry%3AAC_WbKA7eioOUjMSox1x-',
+      'http://letterfeed-backend:8000/feeds/benedicts-newsletter#urn%3Aletterfeed%3Aentry%3ACnNt1hyz49s38spbiNG4h',
+    ]);
+  });
+});
+
+describe('entryLink', () => {
+  const f = { source_url: 'https://ex.com/feed' };
+
+  it('來源有給連結就原樣用', () => {
+    expect(entryLink({ guid: 'g1', url: 'https://ex.com/1' }, f)).toBe('https://ex.com/1');
+  });
+
+  it('沒有連結 → 來源 feed 網址 + #guid;同一篇每次算出來都一樣', () => {
+    const e = { guid: 'tag:ex.com,2026:post/1 a', url: null };
+    expect(entryLink(e, f)).toBe('https://ex.com/feed#tag%3Aex.com%2C2026%3Apost%2F1%20a');
+    expect(entryLink(e, f)).toBe(entryLink({ ...e }, f));
+  });
+
+  it('來源網址本身已帶 # 就先去掉,不會疊出兩個片段', () => {
+    expect(entryLink({ guid: 'g1' }, { source_url: 'https://ex.com/feed#top' })).toBe('https://ex.com/feed#g1');
+  });
+
+  it('連 guid 都沒有 → 退回來源網址(舊行為),不炸', () => {
+    expect(entryLink({ url: '' }, f)).toBe('https://ex.com/feed');
+    expect(entryLink({}, {})).toBe('');
   });
 });
 
