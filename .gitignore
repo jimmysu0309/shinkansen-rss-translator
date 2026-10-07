@@ -19,5 +19,9 @@ test-results/
 # 個人協作指引,不進公開 repo
 CLAUDE.md
 
+# Claude Code 本機工作流(專案 skill / hook / eval 產物;skill 含 afu 家用部署細節,
+# 跟 CLAUDE.md 同待遇不入公開 repo)
+.claude/
+
 # 家用/個人專屬文件(如 PLAN.md、家用部署),不進公開 repo
 docs/excluded/
