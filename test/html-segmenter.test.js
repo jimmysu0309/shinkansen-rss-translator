@@ -120,3 +120,60 @@ describe('防禦式回填', () => {
     expect(() => reassemble(['x ⟦*9⟧ y'])).not.toThrow(); // 索引 9 不存在 → 略過
   });
 });
+
+// ── translate="no" / notranslate(跟進 Shinkansen v2.4.13)──
+// 訊號層次:
+//   ✓ 區塊整顆跳過、inline 走 ⟦*N⟧ 原子保留並原樣回填、class="notranslate" 同義
+//   ✓ translate="yes" 在 no 祖先內重開;文件級 wrapper(佔整體一半以上文字)不採信
+//   ✓ textnode 模式同語意
+//   ✗ 不驗 icon 字型 ligature(需 computed style,伺服器端不移植)
+describe('translate="no" / notranslate', () => {
+  it('區塊級 translate="no" 整顆跳過,其他段照常', () => {
+    const html = '<p>Hello</p><p translate="no">Jane Doe</p><p>World</p>';
+    const { texts, reassemble } = segmentHtml(html);
+    expect(texts).toEqual(['Hello', 'World']);
+    expect(reassemble(identity(texts))).toBe(html);
+  });
+
+  it('class="notranslate" 與 translate="no" 同義(含大小寫 / 空白)', () => {
+    const { texts } = segmentHtml('<p>a1</p><div class="x notranslate">b2</div><p translate=" NO ">c3</p>');
+    expect(texts).toEqual(['a1']);
+  });
+
+  it('段內 inline 的 translate="no" → 原子佔位符,不送翻、回填原樣', () => {
+    const html = '<p>Meet <span translate="no">Jane Doe</span> today.</p>';
+    const { texts, reassemble } = segmentHtml(html);
+    expect(texts).toEqual(['Meet ⟦*0⟧ today.']);
+    expect(reassemble(['今天見 ⟦*0⟧。'])).toBe('<p>今天見 <span translate="no">Jane Doe</span>。</p>');
+  });
+
+  it('段落只剩不翻譯的 inline(去掉佔位符後無文字)→ 不成段', () => {
+    const { texts } = segmentHtml('<p><span class="notranslate">Jane Doe</span></p><p><code>x = 1</code></p><p>ok</p>');
+    expect(texts).toEqual(['ok']);
+  });
+
+  it('translate="yes" 在 translate="no" 祖先內重新開放翻譯', () => {
+    // 尾段夠長,讓 no 容器不到整體一半(否則會被當文件級 wrapper 豁免,見下一條)
+    const html = '<div translate="no"><p>raw</p><p translate="yes">Hello</p><p>raw2</p></div><p>World, and a long trailing paragraph.</p>';
+    const { texts, reassemble } = segmentHtml(html);
+    expect(texts).toEqual(['Hello', 'World, and a long trailing paragraph.']);
+    expect(reassemble(['哈囉', '世界'])).toBe('<div translate="no"><p>raw</p><p translate="yes">哈囉</p><p>raw2</p></div><p>世界</p>');
+  });
+
+  it('文件級 wrapper(整篇被 notranslate 包住)不採信,內容照翻', () => {
+    const { texts } = segmentHtml('<div class="notranslate"><p>Hello</p><p>World</p></div>');
+    expect(texts).toEqual(['Hello', 'World']);
+  });
+
+  it('小型 notranslate 容器(不到整體一半)照常跳過', () => {
+    const { texts } = segmentHtml('<div class="notranslate"><p>Jane</p></div><p>A long paragraph with plenty of words.</p>');
+    expect(texts).toEqual(['A long paragraph with plenty of words.']);
+  });
+
+  it('textnode 模式:translate="no" 子樹不收,translate="yes" 重開', () => {
+    const html = '<p>Hi <span translate="no">Jane <b translate="yes">Doe</b></span> there</p><p>Tail paragraph text</p>';
+    const { texts, reassemble } = segmentHtml(html, { mode: 'textnode' });
+    expect(texts).toEqual(['Hi', 'Doe', 'there', 'Tail paragraph text']);
+    expect(reassemble(['嗨', '多伊', '那邊', '尾段'])).toBe('<p>嗨 <span translate="no">Jane <b translate="yes">多伊</b></span> 那邊</p><p>尾段</p>');
+  });
+});

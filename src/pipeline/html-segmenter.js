@@ -10,6 +10,8 @@
 // 訊號層次:
 //   ✓ 段數不變量:texts 段數 = 翻譯單位數;reassemble 段數不符丟錯
 //   ✓ 結構/圖片/連結/屬性保留(img 走原子標記、inline 走配對標記還原 tag+屬性)
+//   ✓ 尊重 translate="no" / class="notranslate"(區塊整顆跳過、inline 走原子標記;translate="yes" 重開;
+//     文件級 wrapper 不採信)—— 跟進 Shinkansen v2.4.13
 //   ✓ 防禦式回填:LLM 弄壞/漏標記時不崩(未配對的開標記在段末補關、壞標記略過),
 //     且單一段落壞掉不影響其他段落
 //   ✗ 不驗:真實翻譯品質(整合測試 translateEntry 驗)
@@ -31,6 +33,32 @@ const BLOCK_TAGS = new Set([
 ]);
 // 原子(不可翻、無文字)inline 元素 → 自閉合佔位符
 const ATOMIC_TAGS = new Set(['IMG', 'BR', 'HR', 'WBR', 'INPUT', 'SVG', 'VIDEO', 'AUDIO', 'IFRAME', 'EMBED', 'OBJECT']);
+
+// 「不翻譯」宣告(跟進 Shinkansen v2.4.13,移植 content-ns.js isNoTranslateMarked /
+// content-detect.js isInsideExcludedContainer 的語意):
+//   - HTML 標準 translate="no" 屬性,或 Google Translate 慣例的 class="notranslate"
+//   - 依 HTML 規範,translate="yes" 可在 translate="no" 祖先內重新開放翻譯
+//   - 「文件級」宣告不採信:整篇內容被一個 notranslate wrapper 包住(其文字量佔整體一半以上)
+//     多半是 SPA 避開 Google Translate 改 DOM 的 workaround,不代表內容不該翻
+//   - 上游另有 icon 字型 ligature 判斷(靠 computed font-family),伺服器端無 CSS 可查,不移植
+function isNoTranslateMarked(el) {
+  const tr = el.getAttribute && el.getAttribute('translate');
+  if (tr != null && tr.trim().toLowerCase() === 'no') return true;
+  return !!(el.classList && el.classList.contains('notranslate'));
+}
+function isTranslateYes(el) {
+  const tr = el.getAttribute && el.getAttribute('translate');
+  return tr != null && tr.trim().toLowerCase() === 'yes';
+}
+// 回傳「這個元素是否該整顆跳過」的判斷函式;文件級 wrapper 以 body 文字量為基準豁免
+function makeNoTranslateChecker(body) {
+  const bodyLen = (body.textContent || '').length;
+  return (el) => {
+    if (!isNoTranslateMarked(el)) return false;
+    if (el.children.length === 0 || bodyLen === 0) return true;
+    return (el.textContent || '').length * 2 < bodyLen; // 佔一半以上 = 文件級,不採信
+  };
+}
 
 const OPEN = (n) => `⟦${n}⟧`;        // ⟦N⟧
 const CLOSE = (n) => `⟦/${n}⟧`;      // ⟦/N⟧
@@ -65,7 +93,8 @@ function serializeInline(el) {
       if (node.nodeType === TEXT_NODE) {
         s += node.nodeValue;
       } else if (node.nodeType === ELEMENT_NODE) {
-        if (SKIP_TAGS.has(node.tagName) || isAtomic(node)) {
+        // 段內 inline 的 translate="no" / notranslate 整顆保留為 ⟦*N⟧ 不送翻(人名、代碼、icon 名)
+        if (SKIP_TAGS.has(node.tagName) || isAtomic(node) || isNoTranslateMarked(node)) {
           const n = markers.length; markers.push({ atomic: true, node }); s += ATOM(n);
         } else {
           const n = markers.length; markers.push({ atomic: false, node }); s += OPEN(n);
@@ -106,14 +135,19 @@ function rebuildInline(str, markers) {
 }
 
 // 收集翻譯單位(葉子區塊 / 容器內的鬆散文字 / 鬆散 inline)
-function collectUnits(root, units) {
+// skipped=true 代表在 translate="no" 子樹內:不收集,但仍往下走,只為了找 translate="yes" 重開的後代。
+function collectUnits(root, units, noTr, skipped = false) {
   for (const node of root.childNodes) {
     if (node.nodeType === TEXT_NODE) {
-      if (hasTranslatable(node.nodeValue)) units.push({ kind: 'text', node });
+      if (!skipped && hasTranslatable(node.nodeValue)) units.push({ kind: 'text', node });
     } else if (node.nodeType === ELEMENT_NODE) {
       if (SKIP_TAGS.has(node.tagName)) continue;
+      let sk = skipped;
+      if (sk) { if (isTranslateYes(node)) sk = false; }
+      else if (noTr(node)) sk = true;
+      if (sk) { collectUnits(node, units, noTr, true); continue; }
       if (isBlock(node)) {
-        if (containsBlock(node)) collectUnits(node, units);        // 容器 → 往下找葉子區塊
+        if (containsBlock(node)) collectUnits(node, units, noTr); // 容器 → 往下找葉子區塊
         else if (hasTranslatable(node.textContent)) units.push({ kind: 'block', node });
       } else if (!isAtomic(node) && hasTranslatable(node.textContent)) {
         units.push({ kind: 'block', node });                       // 容器下鬆散的 inline,自成一段
@@ -126,18 +160,22 @@ function collectUnits(root, units) {
 // 給不吃佔位符的引擎(Google 翻譯):純文字進出,結構靠只換文字節點保留。
 // 代價:跨 inline 的句子被切碎、少整句語境;但 Google 品質本就普通,可接受。
 const TN_SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'KBD', 'SAMP']);
-function collectTextNodes(root, out) {
+function collectTextNodes(root, out, noTr, skipped = false) {
   for (const node of root.childNodes) {
     if (node.nodeType === TEXT_NODE) {
-      if (hasTranslatable(node.nodeValue)) out.push(node);
+      if (!skipped && hasTranslatable(node.nodeValue)) out.push(node);
     } else if (node.nodeType === ELEMENT_NODE && !TN_SKIP.has(node.tagName)) {
-      collectTextNodes(node, out);
+      // translate="no" / notranslate 子樹不收;translate="yes" 後代重開(語意同 collectUnits)
+      let sk = skipped;
+      if (sk) { if (isTranslateYes(node)) sk = false; }
+      else if (noTr(node)) sk = true;
+      collectTextNodes(node, out, noTr, sk);
     }
   }
 }
 function segmentTextNodes(body) {
   const nodes = [];
-  collectTextNodes(body, nodes);
+  collectTextNodes(body, nodes, makeNoTranslateChecker(body));
   const meta = nodes.map((n) => {
     const raw = n.nodeValue;
     const lead = raw.match(/^\s*/)[0];
@@ -171,7 +209,7 @@ export function segmentHtml(html, opts = {}) {
   const body = document.body;
   if (opts.mode === 'textnode') return segmentTextNodes(body);
   const units = [];
-  collectUnits(body, units);
+  collectUnits(body, units, makeNoTranslateChecker(body));
 
   // 為每個單位算出送翻文字 + 回填用資料
   const prepared = units.map((u) => {
@@ -183,7 +221,10 @@ export function segmentHtml(html, opts = {}) {
     }
     const { text, markers } = serializeInline(u.node);
     return { u, text, markers };
-  });
+  })
+    // 去掉佔位符後沒有可翻文字的單位(整段只剩 ⟦*N⟧,例如段落裡只有 <code> 或 notranslate 的人名)
+    // 不送翻:省 token,也避免 LLM 對「只有標記」的輸入亂補字
+    .filter((p) => hasTranslatable(p.text.replace(MARKER_RE, '')));
   const texts = prepared.map((p) => p.text);
 
   function reassemble(translations) {

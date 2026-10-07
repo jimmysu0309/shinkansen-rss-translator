@@ -244,6 +244,8 @@ async function processFeedLocked(ctx, feed, deps) {
       failed++;
       continue;
     }
+    // 用量表的 model 欄位:免費引擎記固定字串,Gemini 記實際模型(成功與失敗記帳共用)
+    const usageModel = { google: 'google-translate', opencc: 'opencc-s2twp' }[opts.engine] || opts.model;
     try {
       // 抓取全文(fetch_article):翻譯前先抓整篇正文覆蓋摘要
       let contentHtml = e.content_html;
@@ -275,13 +277,19 @@ async function processFeedLocked(ctx, feed, deps) {
         tokensOut: r.usage?.outputTokens || 0,
         translatedAt: now(),
       });
-      const usageModel = { google: 'google-translate', opencc: 'opencc-s2twp' }[opts.engine] || opts.model;
       ctx.usage.log({ ts: now(), feedId: feed.id, entryId: e.id, model: usageModel, usage: r.usage || {} });
       ctx.ledger.record({ feedId: feed.id, guid: e.guid, url: e.url, ts: now() });
       log('info', 'translate', `已翻譯:${e.title || '(無標題)'}`,
         `模型 ${usageModel}｜in ${r.usage?.inputTokens || 0} out ${r.usage?.outputTokens || 0}`);
       translated++;
     } catch (err) {
+      // 失敗也要記帳:引擎慣例是把「丟錯前已付費的 token」掛在 err.usage(多批中途炸掉的前幾批、
+      // 模型拒絕 / 空回應時已算進的 input + thinking token、逐段重翻途中失敗的累計)。不記的話
+      // 每日 token 預算與費用統計都會少算,限流迴圈燒掉的錢完全看不到。
+      const burned = err?.usage;
+      if (burned && ((burned.inputTokens || 0) + (burned.outputTokens || 0)) > 0) {
+        ctx.usage.log({ ts: now(), feedId: feed.id, entryId: e.id, model: usageModel, usage: burned });
+      }
       const failedEntry = ctx.entries.markError(e.id, err, now());
       const gaveUp = failedEntry.translation_retries >= MAX_TRANSLATE_ATTEMPTS;
       log('error', 'translate',

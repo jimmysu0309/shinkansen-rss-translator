@@ -195,6 +195,32 @@ describe('processFeed 編排', () => {
     expect(bad.translation_error).toContain('API 爆了');
   });
 
+  it('翻譯失敗但錯誤帶 usage(引擎丟錯前已付費的 token)→ 仍記帳;沒帶則不記', async () => {
+    const items = [
+      { guid: 'g1', title: 'burn', contentHtml: '<p>x</p>', published_at: 1 },
+      { guid: 'g2', title: 'plain', contentHtml: '<p>y</p>', published_at: 2 },
+    ];
+    const translate = async (entry) => {
+      if (entry.title === 'burn') {
+        const err = new Error('模型空回應');
+        err.usage = { inputTokens: 1234, outputTokens: 5, cachedTokens: 0 }; // 引擎慣例:已付費 usage 掛在 err
+        throw err;
+      }
+      throw new Error('網路斷線'); // 沒掛 usage:fetch 根本沒成功,不該記
+    };
+    const r = await processFeed(ctx, feed, {
+      apiKey: 'x', now: fixedNow, fetchFeed: makeFetch(items), translateEntry: translate,
+    });
+    expect(r.failed).toBe(2);
+    const st = ctx.usage.getStats();
+    expect(st.calls).toBe(1);
+    expect(st.input_tokens).toBe(1234);
+    expect(st.output_tokens).toBe(5);
+    // 兩篇都標 error,記帳不影響錯誤處理
+    expect(ctx.entries.getByGuid(feed.id, 'g1').translation_status).toBe('error');
+    expect(ctx.entries.getByGuid(feed.id, 'g2').translation_status).toBe('error');
+  });
+
   it('fetch_article:翻譯前抓全文覆蓋摘要,並存回 content_html', async () => {
     const f2 = ctx.feeds.create({ source_url: 'https://ex.com/ft', fetch_article: true });
     const items = [{ guid: 'g1', title: 'A', url: 'https://ex.com/a', contentHtml: '<p>只有摘要</p>', published_at: 1 }];
