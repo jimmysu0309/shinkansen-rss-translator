@@ -4,8 +4,11 @@
 //   ✓ 離線:buildGeminiSettings 把選項組成引擎期望的 settings 形狀(預設值、必填檢查)
 //   ✓ 離線:引擎能在純 Node 載入(import 不炸 = shim 生效)
 //   ✓ 整合(gate 在 GEMINI_API_KEY):真打 Gemini 翻一段 → 段數進出相等、譯文非空且為中文
-//   ✗ 不驗:HTML 切段回填(Phase 3)、多引擎(OpenAI-compat/Google MT)
-import { describe, it, expect } from 'vitest';
+//   ✓ 離線:engine:google 路徑用 mock fetch 餵 Google 固定回應格式 → 適配層接 vendor 正確(譯文、token 0、chars、段數)
+//   ✓ live(gate 在 LIVE_GOOGLE=1,`npm run test:live`):真打 Google 非官方端點 → 端點格式沒變
+//     不放進 npm test:Google 對家用 IP 間歇 429,跟程式碼無關,不該卡發版 gate
+//   ✗ 不驗:HTML 切段回填(Phase 3)、OpenAI-compat 引擎
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildGeminiSettings,
   translateTexts,
@@ -98,9 +101,59 @@ describe('translateTexts 整合(需 GEMINI_API_KEY)', () => {
   }, 30_000);
 });
 
-// Google 翻譯引擎(免費,不需 key)。gate 在 GEMINI_API_KEY 存在(當作「此環境可連外網」的代理旗標)。
-describe('Google 翻譯引擎(免費)', () => {
-  liveIt('engine:google → 中文譯文,usage token 皆 0、附 chars', async () => {
+// Google 翻譯引擎(免費,不需 key)。
+// 離線層:把 global fetch 換成回傳 Google 端點的固定回應格式 [[[譯文, 原文], ...]],
+// 驗的是「engine.js 把 engine:google 接到 vendor translateGoogleBatch 的方式正確」。
+// vendor 會把多段用 SEP 串成一個請求,mock 直接把 q 參數原樣回傳、換成對應中文,保住段數。
+describe('Google 翻譯引擎(離線 mock fetch)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const CANNED = { 'Hello, world.': '你好,世界。', 'Good morning.': '早安。' };
+
+  function mockGoogleFetch() {
+    return vi.fn(async (url) => {
+      const u = new URL(url);
+      expect(u.hostname).toBe('translate.googleapis.com');
+      expect(u.searchParams.get('tl')).toBeTruthy();
+      // q 是整組用 SEP 串起來的原文;逐段換成罐頭中文,SEP 原樣保留
+      const q = u.searchParams.get('q');
+      const SEP = '\n\u2063\u2063\u2063\n'; // 與 vendor google-translate.js 的 SEP 相同
+      const translated = q.split(SEP).map(seg => CANNED[seg] ?? seg).join(SEP);
+      return { ok: true, status: 200, json: async () => [[[translated, q]]] };
+    });
+  }
+
+  it('engine:google → 中文譯文,usage token 皆 0、附 chars,fetch 打 Google 端點', async () => {
+    const fetchMock = mockGoogleFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    const { translations, usage, hadMismatch } = await translateTexts(['Hello, world.'], { engine: 'google' });
+    expect(translations).toEqual(['你好,世界。']);
+    expect(usage.inputTokens).toBe(0);
+    expect(usage.outputTokens).toBe(0);
+    expect(usage.chars).toBeGreaterThan(0);
+    expect(hadMismatch).toBe(false);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it('多段:段數進出相等', async () => {
+    vi.stubGlobal('fetch', mockGoogleFetch());
+    const input = ['Hello, world.', 'Good morning.'];
+    const { translations } = await translateTexts(input, { engine: 'google' });
+    expect(translations).toHaveLength(input.length);
+    translations.forEach(t => expect(t).toMatch(/[一-鿿]/));
+  });
+
+  it('端點回非 2xx → 丟出含狀態碼的錯誤(不靜默退回原文)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 429, json: async () => null })));
+    await expect(translateTexts(['Hello, world.'], { engine: 'google' })).rejects.toThrow(/429/);
+  });
+});
+
+// live 層:真打 Google 非官方端點,只驗「端點回應格式沒變」。gate 在 LIVE_GOOGLE=1(`npm run test:live`),
+// 不跟 GEMINI_API_KEY 綁:家用 IP 會被 Google 間歇 429,不能讓它卡 npm test / 發版 gate。
+const liveGoogleIt = process.env.LIVE_GOOGLE ? it : it.skip;
+describe('Google 翻譯引擎(live,需 LIVE_GOOGLE=1)', () => {
+  liveGoogleIt('engine:google → 中文譯文,usage token 皆 0、附 chars', async () => {
     const { translations, usage } = await translateTexts(['Hello, world.'], { engine: 'google' });
     expect(translations).toHaveLength(1);
     expect(translations[0]).toMatch(/[一-鿿]/);

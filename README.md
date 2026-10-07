@@ -63,7 +63,7 @@ src/
   server.js            進入點（開 DB、載 .env、排程、listen）
 deploy/extra-ca.pem    額外信任的根憑證（compose 以 NODE_EXTRA_CA_CERTS 掛入）
 vendor/shinkansen/     Shinkansen 引擎（git submodule）
-test/                  vitest(302 tests)
+test/                  vitest(304 tests)
 ```
 
 ---

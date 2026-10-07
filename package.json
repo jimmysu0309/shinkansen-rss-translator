@@ -12,6 +12,7 @@
     "dev": "node --watch src/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:live": "LIVE_GOOGLE=1 vitest run test/engine.test.js",
     "translate": "node src/cli/translate.js"
   },
   "dependencies": {
