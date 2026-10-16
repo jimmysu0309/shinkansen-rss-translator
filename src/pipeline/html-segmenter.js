@@ -24,7 +24,8 @@ const TEXT_NODE = 1 + 2; // 3
 const ELEMENT_NODE = 1;
 
 // 內容不翻譯、原樣保留的容器
-const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'PRE', 'CODE', 'KBD', 'SAMP']);
+// HEAD:email 電子報(LetterFeed)給的是整份 <html><head>…<body> 文件,head 內的 title/style 不是內文
+const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'PRE', 'CODE', 'KBD', 'SAMP', 'HEAD']);
 // 區塊級元素(當作翻譯單位的候選)
 const BLOCK_TAGS = new Set([
   'P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE',
@@ -149,6 +150,10 @@ function collectUnits(root, units, noTr, skipped = false) {
       if (isBlock(node)) {
         if (containsBlock(node)) collectUnits(node, units, noTr); // 容器 → 往下找葉子區塊
         else if (hasTranslatable(node.textContent)) units.push({ kind: 'block', node });
+      } else if (!isAtomic(node) && containsBlock(node)) {
+        // 非區塊標籤卻包著區塊(<html>/<body>/<center>/<a> 包 <div>…)→ 當容器往下找。
+        // 不這樣做會整顆變一段:2026-10-16 Culpium 電子報整封 18K 字元成 1 段,譯文超過 maxOutputTokens
+        collectUnits(node, units, noTr);
       } else if (!isAtomic(node) && hasTranslatable(node.textContent)) {
         units.push({ kind: 'block', node });                       // 容器下鬆散的 inline,自成一段
       }
@@ -159,7 +164,7 @@ function collectUnits(root, units, noTr, skipped = false) {
 // ── textnode 模式:逐「文字節點」切段(無佔位符)──
 // 給不吃佔位符的引擎(Google 翻譯):純文字進出,結構靠只換文字節點保留。
 // 代價:跨 inline 的句子被切碎、少整句語境;但 Google 品質本就普通,可接受。
-const TN_SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'KBD', 'SAMP']);
+const TN_SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'KBD', 'SAMP', 'HEAD']);
 function collectTextNodes(root, out, noTr, skipped = false) {
   for (const node of root.childNodes) {
     if (node.nodeType === TEXT_NODE) {

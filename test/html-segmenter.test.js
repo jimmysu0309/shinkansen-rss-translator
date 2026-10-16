@@ -177,3 +177,21 @@ describe('translate="no" / notranslate', () => {
     expect(reassemble(['嗨', '多伊', '那邊', '尾段'])).toBe('<p>嗨 <span translate="no">Jane <b translate="yes">多伊</b></span> 那邊</p><p>尾段</p>');
   });
 });
+
+describe('整份 HTML 文件(email 電子報)', () => {
+  it('<html><head><body> 包裝:head 不翻、body 內各區塊各自成段', () => {
+    const html = '<html><head><title>Subject</title><style>p{}</style></head><body><table><tr><td><p>First.</p><p>Second.</p></td></tr></table></body></html>';
+    const { texts } = segmentHtml(html);
+    expect(texts).toEqual(['First.', 'Second.']);
+  });
+
+  it('非區塊標籤包區塊(<center>/<a> 包 <div>)→ 往下切,不整顆成一段', () => {
+    const { texts } = segmentHtml('<center><div>One</div><div>Two</div></center><a href="x"><div>Three</div></a>');
+    expect(texts).toEqual(['One', 'Two', 'Three']);
+  });
+
+  it('textnode 模式也跳過 head', () => {
+    const { texts } = segmentHtml('<html><head><title>T</title></head><body><p>Body</p></body></html>', { mode: 'textnode' });
+    expect(texts).toEqual(['Body']);
+  });
+});
