@@ -8,10 +8,12 @@
 //   ✓ pending/error 篇退回原文(不遺漏文章)
 //   ✓ 有 image_url 的篇章把封面圖前置成 hero(內文已有同圖 / 開頭已有圖則不加)
 //   ✓ 來源沒給連結的篇章,各自拿到互不相同且穩定的 <link>
+//   ✓ 來源沒給連結、但信件內容認得出原文網址(Substack)的,用原文網址
 //   ✗ 不驗:Miniflux 端解析與實際版面(部署時實測)
 
 import { Feed } from 'feed';
 import { getOpenccConvert } from '../engine.js';
+import { emailWebUrl } from './email-web-url.js';
 
 /**
  * @param {object} args
@@ -54,7 +56,9 @@ export function buildFeedXml({ feed, entries, selfUrl }) {
 }
 
 // 每篇的 <link>。來源有給就原樣用;沒給的(LetterFeed 把 email 電子報轉成的 Atom entry
-// 就沒有 <link>,上游 issue #19 未解)用「來源 feed 網址 + #guid」。
+// 就沒有 <link>,上游 issue #19 未解)先從信件原文認原文網址(email-web-url.js,
+// 目前認得 Substack;2026-10-26 起),認不得才用「來源 feed 網址 + #guid」。
+// 做在輸出層而不是入庫時:已經入庫的舊信不用遷移,下次輸出就自動換成原文網址。
 //
 // 為什麼不能直接退回 feed.source_url(2026-10-01 以前的做法):那樣同一條 feed 的每一篇
 // 都拿到同一個網址,下游凡是「以網址識別文章」的地方全部會撞在一起 —— Readwise Reader
@@ -66,6 +70,8 @@ export function buildFeedXml({ feed, entries, selfUrl }) {
 //   不保證這個網址用瀏覽器開得了(來源 feed 若是內網位址,它本來就開不了)。
 export function entryLink(e, feed) {
   if (e.url) return e.url;
+  const web = emailWebUrl(e.content_html);
+  if (web) return web;
   const base = feed.source_url || '';
   if (!e.guid) return base;
   const hash = base.indexOf('#');

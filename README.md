@@ -28,6 +28,7 @@
 - **失敗自動重試**：翻譯失敗（Google 翻譯 429 限流、Gemini 額度 / 逾時、網路）的文章會在之後的刷新自動重試——間隔逐次拉長（10 分鐘 → 1 小時 → 4 小時 → 12 小時），單篇最多試 5 次，每 feed 每輪最多重試 3 篇；用完次數才留在失敗清單等人工處理。
 - **全文抓取**：RSS 只給摘要的 feed，可逐 feed 開啟「抓取全文」（Readability 抽正文、相對網址轉絕對）再翻譯。單次逾時 45 秒，逾時 / 5xx / 429 會退避 2 秒重試一次；仍抓不到就先用摘要翻出去（不卡住閱讀），**之後每次刷新自動補抓**，成功即覆蓋原文重譯，累計 3 次失敗才放棄。
 - **保留封面圖**：很多來源（The Atlantic、多數 WordPress 站）把封面掛在文章本體外的 `media:content` / `media:thumbnail` / `enclosure`，內文一張圖都沒有。這些圖會被撈進 `image_url`，輸出時前置成 hero（內文已有同圖、或開頭就有圖的圖輯類文章則不重複加），下游閱讀器與稍後讀服務都拿得到圖。
+- **電子報原文連結**：email 轉成的 feed（如 LetterFeed）每篇沒有網址時，從信件內容認出網站上的原文網址當 `<link>`（目前認得 Substack，個人 token 一律去掉），閱讀器按「開原文」能直接開；認不得的才退回「來源 feed 網址 + #guid」。
 - **排程**：cron 定期自動處理所有啟用中的 feed。
 - **conditional GET**：etag / last-modified，未更新不重抓；XML 解析失敗（上游偶發截斷回應）自動隔 3 秒重抓一次。
 - **登入密碼**：`.env` 設 `AUTH_PASSWORD` 即啟用（Basic Auth，含防暴力嘗試鎖定）；譯後 RSS 保持免認證。
@@ -63,7 +64,7 @@ src/
   server.js            進入點（開 DB、載 .env、排程、listen）
 deploy/extra-ca.pem    額外信任的根憑證（compose 以 NODE_EXTRA_CA_CERTS 掛入）
 vendor/shinkansen/     Shinkansen 引擎（git submodule）
-test/                  vitest(313 tests)
+test/                  vitest(323 tests)
 ```
 
 ---
@@ -95,7 +96,7 @@ npm start
 跑測試：
 
 ```bash
-npm test          # 313 tests；有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
+npm test          # 323 tests；有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
 ```
 
 ---

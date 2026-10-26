@@ -118,6 +118,21 @@ describe('entryLink', () => {
     expect(entryLink(e, f)).toBe(entryLink({ ...e }, f));
   });
 
+  it('沒有連結但信件認得出原文網址(Substack)→ 用原文網址,不用合成網址', () => {
+    const payload = Buffer.from(JSON.stringify({
+      e: 'https://www.chinatalk.media/subscribe?utm_campaign=email-subscribe&next=https%3A%2F%2Fwww.chinatalk.media%2Fp%2Fslug',
+    })).toString('base64url');
+    const e = { guid: 'urn:letterfeed:entry:X', url: null,
+      content_html: `<a href="https://substack.com/redirect/2/${payload}.SIG">訂閱</a>` };
+    expect(entryLink(e, { source_url: 'http://letterfeed-backend:8000/feeds/chinatalk' }))
+      .toBe('https://www.chinatalk.media/p/slug');
+  });
+
+  it('來源有給連結時,不看信件內容', () => {
+    const e = { guid: 'g', url: 'https://ex.com/1', content_html: 'anything' };
+    expect(entryLink(e, f)).toBe('https://ex.com/1');
+  });
+
   it('來源網址本身已帶 # 就先去掉,不會疊出兩個片段', () => {
     expect(entryLink({ guid: 'g1' }, { source_url: 'https://ex.com/feed#top' })).toBe('https://ex.com/feed#g1');
   });
