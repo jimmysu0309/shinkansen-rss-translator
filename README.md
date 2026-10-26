@@ -149,6 +149,7 @@ http://shinkansen-rss:8088/rss/<feedId>
 | `POLL_CRON` | **首次啟動**的預設更新頻率（DB 未設過時採用；之後以設定頁為準） | `*/15 * * * *` |
 | `DB_PATH` | SQLite 路徑 | `data/shinkansen-feed.sqlite` |
 | `AUTH_PASSWORD` | 介面與 API 的登入密碼（Basic Auth，帳號隨意）；不設 = 不認證 | （無） |
+| `FEED_URL_BASE` | 介面顯示與 OPML 匯出的訂閱網址前綴，例如閱讀器跟本服務在同一個 Docker 網路時設 `http://shinkansen-rss:8088`；不設 = 用瀏覽器目前的網址 | （無） |
 
 > **Gemini 金鑰不再放 `.env`**。一律在 web 介面「設定」頁輸入，存在伺服器本機 SQLite（不外洩到瀏覽器、不進 git）。
 

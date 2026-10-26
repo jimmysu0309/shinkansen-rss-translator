@@ -58,6 +58,9 @@ const app = buildServer(ctx, {
   logger: true,
   onPollCronChange: applyPollCron,
   authPassword: process.env.AUTH_PASSWORD || '',
+  // 閱讀器訂閱用的網址前綴(例:與 Miniflux 同一個 Docker 網路時設 http://shinkansen-rss:8088)。
+  // 沒設就用目前請求的網址(瀏覽器網址列那個)。
+  feedUrlBase: process.env.FEED_URL_BASE || '',
 });
 await registerStatic(app);
 if (!process.env.AUTH_PASSWORD) {

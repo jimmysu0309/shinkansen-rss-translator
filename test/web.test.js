@@ -552,6 +552,22 @@ describe('輸出網址含 port(Fastify 5 的 req.hostname 不含 port,必須用 
   });
 });
 
+describe('FEED_URL_BASE:介面與 OPML 顯示閱讀器實際訂閱的網址', () => {
+  // 訊號層次:驗 /api/defaults 帶出 feedUrlBase、OPML 改用它;不驗 Docker 內部 DNS 是否真的通(部署後用 Miniflux 抓取確認)
+  it('有設:/api/defaults 帶出前綴(去掉結尾斜線),OPML 的 xmlUrl 用它而非請求 host', async () => {
+    const app2 = buildServer(ctx, { apiKey: 'test-key', processDeps: fakeProcessDeps, feedUrlBase: 'http://shinkansen-rss:8088/' });
+    expect((await app2.inject({ method: 'GET', url: '/api/defaults' })).json().feedUrlBase).toBe('http://shinkansen-rss:8088');
+    await app2.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } });
+    const res = await app2.inject({ method: 'GET', url: '/api/feeds/export.opml', headers: { host: 'myhost:8088' } });
+    expect(res.body).toContain('xmlUrl="http://shinkansen-rss:8088/rss/');
+    expect(res.body).not.toContain('myhost');
+  });
+
+  it('沒設:/api/defaults 的 feedUrlBase 是空字串(前端退回 location.origin)', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/defaults' })).json().feedUrlBase).toBe('');
+  });
+});
+
 describe('feeds 列表附狀態篇數', () => {
   it('GET /api/feeds 每個 feed 帶 counts(涵蓋所有文章,非只列表頁那幾篇)', async () => {
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed' } })).json();

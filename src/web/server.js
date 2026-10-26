@@ -147,6 +147,8 @@ export function buildServer(ctx, opts = {}) {
   const AUTH_LOCK_MS = opts.authLockMs ?? 15 * 60_000; // opts 供測試縮短鎖定時長
   const authFails = new Map(); // ip → { count, lockedUntil, at };at = 最後失敗時間,過期整筆清掉
   const authPassword = opts.authPassword || '';
+  // 介面顯示 / OPML 匯出的訂閱網址前綴;空字串 = 用目前請求的 host
+  const feedUrlBase = String(opts.feedUrlBase || '').replace(/\/+$/, '');
   if (authPassword) {
     app.addHook('onRequest', async (req, reply) => {
       if (req.routeOptions?.url === '/rss/:id') return;
@@ -221,6 +223,7 @@ export function buildServer(ctx, opts = {}) {
   // ─── 預設值 / 環境狀態(前端預填用)───
   app.get('/api/defaults', async () => ({
     version: APP_VERSION,
+    feedUrlBase, // 前端組訂閱網址用;空 = 用 location.origin
     model: DEFAULT_MODEL,
     models: SELECTABLE_MODELS,
     engines: ENGINES,
@@ -407,7 +410,7 @@ export function buildServer(ctx, opts = {}) {
   // ─── OPML 匯出 / 匯入 ───
   app.get('/api/feeds/export.opml', async (req, reply) => {
     const feeds = ctx.feeds.list();
-    const base = `${req.protocol}://${req.host}`;
+    const base = feedUrlBase || `${req.protocol}://${req.host}`;
     const xml = feedsToOpml(feeds, (f) => `${base}/rss/${f.id}`);
     reply.header('content-disposition', 'attachment; filename="shinkansen-feed.opml"');
     reply.header('content-type', 'text/x-opml; charset=utf-8');

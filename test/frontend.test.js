@@ -91,6 +91,17 @@ describe('前端:feed 複製按鈕', () => {
   });
 });
 
+describe('前端:訂閱網址用 FEED_URL_BASE', () => {
+  it('DEFAULTS.feedUrlBase 有值時,RSS 欄位顯示該前綴而非 location.origin', async () => {
+    DEFAULTS.feedUrlBase = 'http://shinkansen-rss:8088';
+    try {
+      await boot();
+      const rssInput = document.querySelector('#feed-list .feed-item .rss-row input');
+      expect(rssInput.value).toBe('http://shinkansen-rss:8088/rss/1');
+    } finally { delete DEFAULTS.feedUrlBase; }
+  });
+});
+
 describe('前端:feed 卡片狀態徽章', () => {
   beforeEach(boot);
 

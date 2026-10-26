@@ -303,7 +303,8 @@ async function loadFeedsInner() {
 
   list.innerHTML = feeds.map(f => {
     const counts = f.counts || { done: 0, pending: 0, error: 0 };
-    const rssUrl = `${location.origin}/rss/${f.id}`;
+    // 顯示「閱讀器實際要訂閱的網址」:伺服器設了 FEED_URL_BASE 就用它(例:Miniflux 內部網址),否則用目前網址
+    const rssUrl = `${(DEFAULTS && DEFAULTS.feedUrlBase) || location.origin}/rss/${f.id}`;
     return `<div class="feed-item${f.enabled ? '' : ' disabled'}" data-id="${f.id}">
       <div class="feed-head">
         <div>

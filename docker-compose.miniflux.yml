@@ -6,6 +6,9 @@ name: shinkansen-rss-translator
 
 services:
   app:
+    environment:
+      # 介面顯示 / OPML 匯出的訂閱網址改成 Miniflux 實際用的內部網址(不是瀏覽器網址列那個)
+      FEED_URL_BASE: http://shinkansen-rss:8088
     networks:
       - miniflux
 
