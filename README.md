@@ -19,7 +19,7 @@
 
 - **三引擎**：Gemini（AI 翻譯、品質最佳、需 API 金鑰）＋ Google 翻譯（免費 & 不需金鑰）＋ **OpenCC 簡轉繁**（免費、零失真——本機字典 `cn→twp` 含台灣慣用詞，簡中 feed 免 token，整份 HTML 直轉連 code / 圖片 alt / 作者名都繁化）。可全域或逐 feed 選。
 - **道地台灣繁中**：內建 Shinkansen 的系統 prompt ＋ 26 條中國用語黑名單（視頻→影片、軟件→軟體…），可在介面編輯。
-- **防漏譯**：段數進出相等的不變量 ＋ 序號標記；結構、圖片、連結保留；尊重 `translate="no"` / `notranslate` 宣告（人名、代碼不送翻）。
+- **防漏譯**：段數進出相等的不變量 ＋ 序號標記；結構、圖片、連結保留；尊重 `translate="no"` / `notranslate` 宣告（人名、代碼不送翻）。模型弄壞佔位符時自動修復（壞標記收斂、半殘配對補齊、遺失的圖片 / code 補回），不讓標記碎片出現在譯文；清單、引文裡夾著子區塊的句子整句一起翻，不被切碎。
 - **web 介面**：新增 / 管理 feed、全域設定、用量儀表板、翻譯紀錄，全部在瀏覽器完成。
 - **OPML 匯入 / 匯出**：批次搬入來源、批次輸出譯後 feed 給 Miniflux 訂閱。
 - **用量統計**：費用（USD，可自訂各模型單價）、token、快取命中率、每日費用圖、逐 feed 與逐筆明細、CSV 匯出、一鍵清除。
@@ -64,7 +64,7 @@ src/
   server.js            進入點（開 DB、載 .env、排程、listen）
 deploy/extra-ca.pem    額外信任的根憑證（compose 以 NODE_EXTRA_CA_CERTS 掛入）
 vendor/shinkansen/     Shinkansen 引擎（git submodule）
-test/                  vitest(330 tests)
+test/                  vitest(347 tests)
 ```
 
 ---
@@ -96,7 +96,7 @@ npm start
 跑測試：
 
 ```bash
-npm test          # 330 tests；有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
+npm test          # 347 tests；有設 GEMINI_API_KEY 才會跑真打 API 的整合測試
 ```
 
 ---

@@ -12,8 +12,10 @@
 //   ✓ 結構/圖片/連結/屬性保留(img 走原子標記、inline 走配對標記還原 tag+屬性)
 //   ✓ 尊重 translate="no" / class="notranslate"(區塊整顆跳過、inline 走原子標記;translate="yes" 重開;
 //     文件級 wrapper 不採信)—— 跟進 Shinkansen v2.4.13
-//   ✓ 防禦式回填:LLM 弄壞/漏標記時不崩(未配對的開標記在段末補關、壞標記略過),
-//     且單一段落壞掉不影響其他段落
+//   ✓ 容器內區塊之間的「文字 + inline」合成一段(不逐文字節點切碎句子)
+//   ✓ 防禦式回填(移植上游 content-serialize 修復鏈):壞標記收斂(❰❱ / ⟦0 drug⟧ / ⟦/2» / 全形數字)、
+//     半殘配對補標記、重複標記去重、遺失的原子元素(圖片 / hr / code)補回段尾、殘留標記剝除、
+//     CJK 標記旁幻覺空白收斂與中英交界補空格;單一段落壞掉不影響其他段落
 //   ✗ 不驗:真實翻譯品質(整合測試 translateEntry 驗)
 //
 // 歷史:v1 用「文字節點層級」切段(結構安全但句子被 inline 切碎);此版換 block+佔位符提升語序品質。
@@ -84,21 +86,13 @@ function containsBlock(el) {
   }
   return false;
 }
-function escText(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
-function escAttr(s) { return String(s).replace(/[&"]/g, (c) => ({ '&': '&amp;', '"': '&quot;' }[c])); }
-function openTag(el) {
-  let s = '<' + el.tagName.toLowerCase();
-  for (const a of el.attributes) s += ` ${a.name}="${escAttr(a.value)}"`;
-  return s + '>';
-}
-function closeTag(el) { return '</' + el.tagName.toLowerCase() + '>'; }
-
-// 把一個區塊的 inline 內容序列化成「帶佔位符的純文字」+ markers 對照
-function serializeInline(el) {
+// ── 序列化:inline 內容 → 帶佔位符的純文字 + markers 對照 ──
+// nodes:一個區塊的 childNodes,或容器下一串「鬆散 inline run」的兄弟節點
+function serializeInline(nodes) {
   const markers = []; // markers[n] = { atomic, node }
   let s = '';
-  const walk = (parent) => {
-    for (const node of parent.childNodes) {
+  const walk = (list) => {
+    for (const node of list) {
       if (node.nodeType === TEXT_NODE) {
         s += collapseWs(node.nodeValue);
       } else if (node.nodeType === ELEMENT_NODE) {
@@ -107,66 +101,325 @@ function serializeInline(el) {
           const n = markers.length; markers.push({ atomic: true, node }); s += ATOM(n);
         } else {
           const n = markers.length; markers.push({ atomic: false, node }); s += OPEN(n);
-          walk(node);
+          walk(node.childNodes);
           s += CLOSE(n);
         }
       }
     }
   };
-  walk(el);
-  return { text: s, markers };
+  walk(nodes);
+  return { text: s.trim(), markers };
 }
 
-// 防禦式回填:把帶佔位符的譯文還原成 innerHTML
-function rebuildInline(str, markers) {
-  let out = '';
-  const stack = [];
-  let last = 0, m;
-  MARKER_RE.lastIndex = 0;
-  while ((m = MARKER_RE.exec(str))) {
-    out += escText(str.slice(last, m.index));
-    last = MARKER_RE.lastIndex;
-    const isClose = !!m[1], isAtom = !!m[2], n = Number(m[3]);
-    const mk = markers[n];
-    if (isAtom) {
-      if (mk && mk.atomic) out += mk.node.outerHTML; // 壞索引則略過
-    } else if (isClose) {
-      // 關到對應的開標記;找不到就忽略(段末統一補關)
-      const idx = stack.lastIndexOf(n);
-      if (idx !== -1) { out += closeTag(markers[n].node); stack.splice(idx, 1); }
-    } else {
-      if (mk && !mk.atomic) { out += openTag(mk.node); stack.push(n); }
-    }
+// ── 譯文修復:移植上游 content-serialize.js(v2.5.8)的佔位符修復鏈 ──
+// 上游是瀏覽器 content script(IIFE + window.__SK),無法 import,故重寫;
+// 這是同一份事實的雙實作,升級 submodule 時照 CLAUDE.md 鐵律 2 比對同步。
+const CJK = '[\\u3400-\\u9fff\\uf900-\\ufaff\\u3000-\\u303f\\uff00-\\uffef]'; // = SK.CJK_CHAR
+const TOK_SRC = '⟦[*\\/]?\\d+⟧';
+const RE_ANY_TOKEN_G = /⟦\*?\/?\d+⟧/g;
+const RE_CJK_SP_OPEN = new RegExp('(' + CJK + ')[ \\t]+(⟦\\d+⟧' + CJK + ')', 'g');
+const RE_CJK_SP_CLOSE = new RegExp('(' + CJK + '⟦\\/\\d+⟧)[ \\t]+(' + CJK + ')', 'g');
+const RE_CJK_SP_ATOMIC_L = new RegExp('(' + CJK + ')[ \\t]+(⟦\\*\\d+⟧)', 'g');
+const RE_CJK_SP_ATOMIC_R = new RegExp('(⟦\\*\\d+⟧)[ \\t]+(' + CJK + ')', 'g');
+const RE_CJK_RUN_MID = new RegExp('(' + CJK + ')((?:[ \\t]*(?:' + TOK_SRC + '))+[ \\t]*)(?=' + CJK + ')', 'g');
+const RE_CJK_RUN_HEAD = new RegExp('^((?:[ \\t]*(?:' + TOK_SRC + '))+[ \\t]*)(?=' + CJK + ')');
+const RE_CJK_RUN_TAIL = new RegExp('(' + CJK + ')((?:[ \\t]*(?:' + TOK_SRC + '))+[ \\t]*)$');
+const RE_STRAY_HALF_CLOSE_G = /[*/]\d+⟧/g;
+const RE_STRAY_BRACKETS_G = /[⟦⟧❰❱]/g;
+// 與上游差一處:加注首字元用 [^\s⟧] 而非 \S——\S 會吃到 ⟧,把「⟦ 0 ⟧貓⟦/0 ⟧」整段誤當一個加注標記(上游同 bug)
+const RE_NORM_ANNOTATED_G = /⟦\s*(\*?\/?\d+)[ \t]+[^\s⟧][^⟧]{0,28}⟧/g;
+const RE_NORM_SPACED_G = /⟦\s*(\*?\/?\d+)\s*⟧/g;
+const RE_NORM_MANGLED_CLOSE_G = /⟦(\*?\/?\d+)(?:[»›❱》〉≫]|(?=[^⟧0-9])|$)/g;
+const RE_TOK_G = /⟦(\*)?(\/)?(\d+)⟧/g;
+const RE_PAIRED_OCC_G = /⟦(\d+)⟧([\s\S]*?)⟦\/\1⟧/g;
+const RE_PARSE_G = /⟦(\d+)⟧([\s\S]*?)⟦\/\1⟧|⟦\*(\d+)⟧/g;
+const BOUNDARY_RE = /[。？！；，、.!?;,\n]/;
+const RE_BOUNDARY_G = /[。？！；，、.!?;,\n]/g;
+const FULLWIDTH = { '０': '0', '１': '1', '２': '2', '３': '3', '４': '4', '５': '5', '６': '6', '７': '7', '８': '8', '９': '9', '＊': '*', '／': '/' };
+
+// 模型寫壞的標記收斂成標準形(上游 normalizeLlmPlaceholders):
+//   ❰❱ 替代括號、⟦0 drug⟧ 加注、⟦ 0 ⟧ 空白、⟦/2» / 段尾 ⟦/2 漏閉合;
+//   另補上游 prompt 有禁但沒修的全形數字 / 斜線 / 星號(⟦／０⟧)
+export function normalizeLlmPlaceholders(s) {
+  if (!s) return s;
+  s = s.replace(/❰/g, '⟦').replace(/❱/g, '⟧');
+  s = s.replace(/⟦[\s*/＊／0-9０-９]+/g, (m) => m.replace(/[０-９＊／]/g, (c) => FULLWIDTH[c]));
+  s = s.replace(RE_NORM_ANNOTATED_G, '⟦$1⟧');
+  s = s.replace(RE_NORM_SPACED_G, '⟦$1⟧');
+  return s.replace(RE_NORM_MANGLED_CLOSE_G, '⟦$1⟧');
+}
+
+// 認不得的殘留標記從文字中剝掉,不讓 ⟦3⟧ / ⟦ / /2⟧ 碎片顯示在譯文(上游 stripStrayPlaceholderMarkers)
+function stripStrayMarkers(s) {
+  return normalizeLlmPlaceholders(s)
+    .replace(RE_ANY_TOKEN_G, '')
+    .replace(RE_STRAY_HALF_CLOSE_G, '')
+    .replace(RE_STRAY_BRACKETS_G, '');
+}
+
+// 兩個 CJK 字元之間只隔著標記與空白時,空白是模型幻覺 → 移除(上游 collapseCjkSpacesAroundPlaceholders)。
+// 不動 CJK / 拉丁邊界的空格(中英空格是合法排版)
+export function collapseCjkSpacesAroundPlaceholders(s) {
+  if (!s) return s;
+  s = s.replace(RE_CJK_SP_OPEN, '$1$2');
+  s = s.replace(RE_CJK_SP_CLOSE, '$1$2');
+  s = s.replace(RE_CJK_SP_ATOMIC_L, '$1$2');
+  s = s.replace(RE_CJK_SP_ATOMIC_R, '$1$2');
+  const strip = (run) => run.replace(/[ \t]+/g, '');
+  s = s.replace(RE_CJK_RUN_MID, (m, a, run) => a + strip(run));
+  s = s.replace(RE_CJK_RUN_HEAD, (m, run) => strip(run));
+  s = s.replace(RE_CJK_RUN_TAIL, (m, a, run) => a + strip(run));
+  return s;
+}
+
+// 半殘配對修復(上游 repairHalfBrokenPlaceholders,2026-07-20):
+//   A) 有開無關 → 往後掃,在「外層配對的關標記 / 子句邊界標點 / 字串尾」最早者前補 ⟦/N⟧
+//   B) 有關無開 → 往回掃,在「最近的標記之後 / 子句邊界標點之後 / 字串頭」最近者補 ⟦N⟧
+// 只插標記不動文字;只修 markers 裡真實存在的配對型 index
+export function repairHalfBrokenPlaceholders(text, markers) {
+  if (!text || !Array.isArray(markers) || markers.length === 0 || !text.includes('⟦')) return text;
+  const isPaired = (mk) => !!mk && !mk.atomic;
+  const toks = [];
+  let m;
+  RE_TOK_G.lastIndex = 0;
+  while ((m = RE_TOK_G.exec(text)) !== null) {
+    toks.push({ star: !!m[1], close: !!m[2], n: Number(m[3]), start: m.index, end: m.index + m[0].length });
   }
-  out += escText(str.slice(last));
-  while (stack.length) out += closeTag(markers[stack.pop()].node); // 未關的補關
+  if (toks.length === 0) return text;
+  const opens = new Map();
+  const closes = new Map();
+  for (const t of toks) {
+    if (t.star) continue;
+    if (t.close) closes.set(t.n, t);
+    else if (!opens.has(t.n)) opens.set(t.n, t);
+  }
+  const insertions = [];
+  const brokenOpens = [...opens.keys()]
+    .filter((n) => !closes.has(n) && isPaired(markers[n]))
+    .sort((a, b) => opens.get(a).start - opens.get(b).start);
+  for (const n of brokenOpens) {
+    const openTok = opens.get(n);
+    let cursor = openTok.end;
+    let pos = text.length;
+    const after = toks.filter((t) => t.start >= openTok.end).sort((a, b) => a.start - b.start);
+    for (const t of after) {
+      if (t.start < cursor) continue;
+      const bm = text.slice(cursor, t.start).match(BOUNDARY_RE);
+      if (bm) { pos = cursor + bm.index; break; }
+      if (t.star) { cursor = t.end; continue; }
+      if (!t.close) {
+        const c = closes.get(t.n);
+        cursor = (c && c.start > t.start) ? c.end : t.end;
+        continue;
+      }
+      const o = opens.get(t.n);
+      if (o && o.start < openTok.start) { pos = t.start; break; }
+      cursor = t.end;
+    }
+    if (pos === text.length) {
+      const bm = text.slice(cursor).match(BOUNDARY_RE);
+      if (bm) pos = cursor + bm.index;
+    }
+    insertions.push({ pos, marker: CLOSE(n), tieOrder: openTok.start });
+  }
+  const brokenCloses = [...closes.keys()].filter((n) => !opens.has(n) && isPaired(markers[n]));
+  for (const n of brokenCloses) {
+    const closeTok = closes.get(n);
+    const before = toks.filter((t) => t.end <= closeTok.start).sort((a, b) => b.end - a.end);
+    const nearestTokEnd = before.length ? before[0].end : 0;
+    const gap = text.slice(nearestTokEnd, closeTok.start);
+    const g = gap.match(RE_BOUNDARY_G);
+    const lastBoundary = g ? gap.lastIndexOf(g[g.length - 1]) : -1;
+    const pos = lastBoundary >= 0 ? nearestTokEnd + lastBoundary + 1 : nearestTokEnd;
+    insertions.push({ pos, marker: OPEN(n), tieOrder: -closeTok.start });
+  }
+  if (insertions.length === 0) return text;
+  insertions.sort((a, b) => (b.pos - a.pos) || (a.tieOrder - b.tieOrder));
+  let out = text;
+  for (const ins of insertions) out = out.slice(0, ins.pos) + ins.marker + out.slice(ins.pos);
   return out;
 }
 
-// 收集翻譯單位(葉子區塊 / 容器內的鬆散文字 / 鬆散 inline)
-// skipped=true 代表在 translate="no" 子樹內:不收集,但仍往下走,只為了找 translate="yes" 重開的後代。
-function collectUnits(root, units, noTr, skipped = false) {
-  for (const node of root.childNodes) {
-    if (node.nodeType === TEXT_NODE) {
-      if (!skipped && hasTranslatable(node.nodeValue)) units.push({ kind: 'text', node });
-    } else if (node.nodeType === ELEMENT_NODE) {
-      if (SKIP_TAGS.has(node.tagName)) continue;
-      let sk = skipped;
-      if (sk) { if (isTranslateYes(node)) sk = false; }
-      else if (noTr(node)) sk = true;
-      if (sk) { collectUnits(node, units, noTr, true); continue; }
-      if (isBlock(node)) {
-        if (containsBlock(node)) collectUnits(node, units, noTr); // 容器 → 往下找葉子區塊
-        else if (hasTranslatable(node.textContent)) units.push({ kind: 'block', node });
-      } else if (!isAtomic(node) && containsBlock(node)) {
-        // 非區塊標籤卻包著區塊(<html>/<body>/<center>/<a> 包 <div>…)→ 當容器往下找。
-        // 不這樣做會整顆變一段:2026-10-16 Culpium 電子報整封 18K 字元成 1 段,譯文超過 maxOutputTokens
-        collectUnits(node, units, noTr);
-      } else if (!isAtomic(node) && hasTranslatable(node.textContent)) {
-        units.push({ kind: 'block', node });                       // 容器下鬆散的 inline,自成一段
+// 同一配對標記出現多次 → 保留第一個有內容的,其餘降級成純文字(上游 selectBestSlotOccurrences)
+export function selectBestSlotOccurrences(text) {
+  if (!text) return text;
+  const occ = [];
+  let m;
+  RE_PAIRED_OCC_G.lastIndex = 0;
+  while ((m = RE_PAIRED_OCC_G.exec(text)) !== null) {
+    occ.push({
+      idx: Number(m[1]), start: m.index, end: m.index + m[0].length, inner: m[2],
+      nonEmpty: m[2].replace(RE_ANY_TOKEN_G, '').trim().length > 0,
+    });
+  }
+  const byIdx = new Map();
+  for (const o of occ) {
+    if (!byIdx.has(o.idx)) byIdx.set(o.idx, []);
+    byIdx.get(o.idx).push(o);
+  }
+  const losers = [];
+  for (const [, list] of byIdx) {
+    if (list.length === 1) continue;
+    const winner = list.find((o) => o.nonEmpty) || list[0];
+    for (const o of list) if (o !== winner) losers.push(o);
+  }
+  if (losers.length === 0) return text;
+  losers.sort((a, b) => b.start - a.start);
+  let out = text;
+  for (const l of losers) out = out.slice(0, l.start) + l.inner + out.slice(l.end);
+  return out;
+}
+
+// ── 回填:譯文 → DOM(上游 parseSegment / _maybePadCjkLatinSpace / _appendInlineImg)──
+function tailEndsCjk(t) { return /[㐀-鿿豈-﫿ｦ-ﾟ]$/.test(t || ''); }
+function headStartsLatin(t) { return /^[A-Za-z0-9@#\-+/%&]/.test((t || '').replace(/^\s+/, '')); }
+function findTrailingTextNode(node) {
+  let cur = node;
+  while (cur && cur.nodeType === ELEMENT_NODE) {
+    if (cur.tagName === 'BR') return null;
+    cur = cur.lastChild;
+  }
+  return cur && cur.nodeType === TEXT_NODE ? cur : null;
+}
+function appendSpaceToTail(last) {
+  if (last.nodeType === TEXT_NODE) last.nodeValue += ' ';
+  else { const t = findTrailingTextNode(last); if (t) t.nodeValue += ' '; }
+}
+function tailText(last) {
+  return last.nodeType === TEXT_NODE ? (last.nodeValue || '') : (last.textContent || '');
+}
+// CJK 結尾 + 下一個元素以拉丁字開頭 → 補一格(台灣排版慣例;模型常吃掉標記周邊空白)
+function maybePadCjkLatin(container, next) {
+  const last = container.lastChild;
+  if (!last) return;
+  const t = tailText(last);
+  if (!t || /\s$/.test(t) || !tailEndsCjk(t)) return;
+  if (!headStartsLatin(next.textContent || '')) return;
+  appendSpaceToTail(last);
+}
+// 段內圖片前後補空格(CJK 空白收斂會讓圖片緊貼文字)
+function appendInlineImg(container, img) {
+  const last = container.lastChild;
+  if (last) {
+    const t = tailText(last);
+    if (t && !/\s$/.test(t)) appendSpaceToTail(last);
+  }
+  container.appendChild(img);
+  container.appendChild(container.ownerDocument.createTextNode(' '));
+}
+function placeAtomic(container, node) {
+  const c = node.cloneNode(true);
+  if (c.tagName === 'IMG') appendInlineImg(container, c);
+  else { maybePadCjkLatin(container, c); container.appendChild(c); }
+}
+function parseInto(container, text, markers, used) {
+  const doc = container.ownerDocument;
+  const pushText = (s) => {
+    const clean = stripStrayMarkers(s);
+    if (clean) container.appendChild(doc.createTextNode(clean));
+  };
+  // 不共用全域 regex:巢狀遞迴會互相改 lastIndex
+  const re = new RegExp(RE_PARSE_G.source, 'g');
+  let cursor = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > cursor) pushText(text.slice(cursor, m.index));
+    if (m[3] !== undefined) {
+      const n = Number(m[3]);
+      const mk = markers[n];
+      if (mk && mk.atomic && !used.has(n)) { used.add(n); placeAtomic(container, mk.node); }
+    } else {
+      const n = Number(m[1]);
+      const mk = markers[n];
+      if (mk && !mk.atomic) {
+        used.add(n);
+        const shell = mk.node.cloneNode(false);
+        parseInto(shell, m[2], markers, used);
+        maybePadCjkLatin(container, shell);
+        container.appendChild(shell);
+      } else {
+        parseInto(container, m[2], markers, used); // 壞索引:殼丟掉、內文保留
       }
     }
+    cursor = m.index + m[0].length;
   }
+  if (cursor < text.length) pushText(text.slice(cursor));
+}
+
+// 防禦式回填:修復鏈 → 建 DOM → 回收遺失的原子元素
+function rebuildInto(container, str, markers) {
+  let t = normalizeLlmPlaceholders(str);
+  t = collapseCjkSpacesAroundPlaceholders(t);
+  t = repairHalfBrokenPlaceholders(t, markers);
+  t = selectBestSlotOccurrences(t);
+  const used = new Set();
+  parseInto(container, t, markers, used);
+  // 遺失回收(上游 2026-07-09):模型把 ⟦*N⟧ 整顆吃掉 → 圖片 / hr / inline code 會從段落消失。
+  // 位置資訊已隨譯文遺失,補到段尾是無資訊下的最小破壞。配對型(連結 / 粗體)不回收:文字還在譯文裡。
+  // 上游只在「至少配到一個標記」時回收(否則走 fallback 不用此結果);本專案沒有 fallback,一律回收。
+  markers.forEach((mk, n) => { if (mk.atomic && !used.has(n)) placeAtomic(container, mk.node); });
+}
+
+// ── 收集翻譯單位 ──
+// 不翻、且會打斷 inline run 的容器(CODE / KBD / SAMP 在 run 內走原子標記,不打斷)
+const RUN_BREAK_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'PRE', 'HEAD']);
+function hasTranslateYesDescendant(el) {
+  for (const d of el.querySelectorAll('[translate]')) if (isTranslateYes(d)) return true;
+  return false;
+}
+function pushRun(run, units) {
+  while (run.length && run[run.length - 1].nodeType !== TEXT_NODE && run[run.length - 1].nodeType !== ELEMENT_NODE) run.pop();
+  if (!run.some((n) => hasTranslatable(n.textContent))) return;
+  // 只有一個非原子元素(其餘是空白)→ 照區塊處理:回填只換它的 innerHTML,元素本身不經佔位符,最穩
+  const els = run.filter((n) => n.nodeType === ELEMENT_NODE);
+  const onlyWs = run.every((n) => n.nodeType === ELEMENT_NODE || !/\S/.test(n.nodeValue || ''));
+  if (els.length === 1 && onlyWs && !isAtomic(els[0]) && !SKIP_TAGS.has(els[0].tagName) && !isNoTranslateMarked(els[0])) {
+    units.push({ kind: 'block', node: els[0] });
+    return;
+  }
+  units.push({ kind: 'run', nodes: run.slice() });
+}
+// 葉子區塊自成一段;容器內「區塊之間」連續的文字 + inline(連結、粗體、圖片、inline code)合成一個 run 一段,
+// 不再逐文字節點切碎(`<li>See <a>this</a> for more.<ul>…` 原本切成三段,句子語境斷掉;對齊上游
+// content-detect extractInlineFragments)。
+// skipped=true:在 translate="no" 子樹內,不收集,只往下找 translate="yes" 重開的後代。
+function collectUnits(root, units, noTr, skipped = false) {
+  let run = [];
+  const flush = () => { if (run.length) pushRun(run, units); run = []; };
+  for (const node of root.childNodes) {
+    if (node.nodeType === TEXT_NODE) {
+      if (!skipped) run.push(node);
+      continue;
+    }
+    if (node.nodeType !== ELEMENT_NODE) {
+      if (run.length) run.push(node); // run 中間的註解跟著 run 一起被替換
+      continue;
+    }
+    if (skipped) {
+      if (!isTranslateYes(node)) { collectUnits(node, units, noTr, true); continue; }
+      // translate="yes" 重開:這顆自成單位
+      if (isBlock(node) || containsBlock(node)) collectUnits(node, units, noTr);
+      else if (hasTranslatable(node.textContent) && !isAtomic(node)) units.push({ kind: 'block', node });
+      continue;
+    }
+    if (RUN_BREAK_TAGS.has(node.tagName)) { flush(); continue; }
+    if (isBlock(node) || (!isAtomic(node) && containsBlock(node))) {
+      flush();
+      if (noTr(node)) { collectUnits(node, units, noTr, true); continue; }
+      // 非區塊標籤卻包著區塊(<html>/<body>/<center>/<a> 包 <div>…)也當容器往下找。
+      // 不這樣做會整顆變一段:2026-10-16 Culpium 電子報整封 18K 字元成 1 段,譯文超過 maxOutputTokens
+      if (containsBlock(node)) collectUnits(node, units, noTr);
+      else if (hasTranslatable(node.textContent)) units.push({ kind: 'block', node });
+      continue;
+    }
+    // inline:notranslate 的 inline 在 run 內走原子標記;但內含 translate="yes" 後代時要往下重開
+    if (isNoTranslateMarked(node) && noTr(node) && hasTranslateYesDescendant(node)) {
+      flush();
+      collectUnits(node, units, noTr, true);
+      continue;
+    }
+    run.push(node);
+  }
+  flush();
 }
 
 // ── textnode 模式:逐「文字節點」切段(無佔位符)──
@@ -226,14 +479,8 @@ export function segmentHtml(html, opts = {}) {
 
   // 為每個單位算出送翻文字 + 回填用資料
   const prepared = units.map((u) => {
-    if (u.kind === 'text') {
-      const raw = u.node.nodeValue;
-      const lead = raw.match(/^\s*/)[0];
-      const trail = raw.match(/\s*$/)[0];
-      return { u, text: collapseWs(raw.slice(lead.length, raw.length - trail.length)), lead, trail };
-    }
-    const { text, markers } = serializeInline(u.node);
-    return { u, text: text.trim(), markers };
+    const { text, markers } = serializeInline(u.kind === 'run' ? u.nodes : u.node.childNodes);
+    return { u, text, markers };
   })
     // 去掉佔位符後沒有可翻文字的單位(整段只剩 ⟦*N⟧,例如段落裡只有 <code> 或 notranslate 的人名)
     // 不送翻:省 token,也避免 LLM 對「只有標記」的輸入亂補字
@@ -250,10 +497,23 @@ export function segmentHtml(html, opts = {}) {
       const p = prepared[i];
       const t = translations[i];
       const val = (t === undefined || t === null || t === '') ? p.text : stripLiteralNewlines(t, p.text); // 空譯文保留原文
-      if (p.u.kind === 'text') {
-        p.u.node.nodeValue = p.lead + val + p.trail;
+      if (p.u.kind === 'block') {
+        const el = p.u.node;
+        while (el.firstChild) el.removeChild(el.firstChild);
+        rebuildInto(el, val, p.markers);
       } else {
-        p.u.node.innerHTML = rebuildInline(val, p.markers);
+        // run:譯文建在暫存容器,搬到 run 第一個節點前,再移除原 run 節點;頭尾空白保留(與相鄰元素的間距)
+        const nodes = p.u.nodes;
+        const first = nodes[0], last = nodes[nodes.length - 1];
+        const parent = first.parentNode;
+        const tmp = document.createElement('div');
+        rebuildInto(tmp, val, p.markers);
+        const lead = first.nodeType === TEXT_NODE ? first.nodeValue.match(/^\s*/)[0] : '';
+        const trail = last.nodeType === TEXT_NODE ? last.nodeValue.match(/\s*$/)[0] : '';
+        if (lead) parent.insertBefore(document.createTextNode(lead), first);
+        while (tmp.firstChild) parent.insertBefore(tmp.firstChild, first);
+        if (trail) parent.insertBefore(document.createTextNode(trail), first);
+        for (const n of nodes) parent.removeChild(n);
       }
     }
     return body.innerHTML;

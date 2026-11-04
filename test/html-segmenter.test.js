@@ -224,3 +224,95 @@ describe('原始碼硬換行(2026-11-04 Daring Fireball 引文譯文夾字面 \\
     expect(reassemble(['用 \\n 表示換行'])).toBe('<p>用 \\n 表示換行</p>');
   });
 });
+
+// 2026-11-04 對照上游 content-serialize / content-detect 補齊的防禦(1~6)
+describe('混合內容:區塊之間的文字 + inline 合成一段(#2)', () => {
+  it('<li> 直屬文字 + 連結 + 子清單 → 句子一段、子清單另一段', () => {
+    const { texts, reassemble } = segmentHtml('<li>See <a href="x">this link</a> for more details.<ul><li>Child item</li></ul></li>');
+    expect(texts).toEqual(['See ⟦0⟧this link⟦/0⟧ for more details.', 'Child item']);
+    expect(reassemble(['更多細節請見⟦0⟧這個連結⟦/0⟧。', '子項目']))
+      .toBe('<li>更多細節請見<a href="x">這個連結</a>。<ul><li>子項目</li></ul></li>');
+  });
+
+  it('區塊前後兩串 inline 各自成段,頭尾空白保留', () => {
+    const { texts, reassemble } = segmentHtml('<div>Intro <b>bold</b> text <p>Para</p> outro <i>it</i></div>');
+    expect(texts).toEqual(['Intro ⟦0⟧bold⟦/0⟧ text', 'Para', 'outro ⟦0⟧it⟦/0⟧']);
+    expect(reassemble(['開頭⟦0⟧粗體⟦/0⟧文字', '段落', '結尾⟦0⟧斜體⟦/0⟧']))
+      .toBe('<div>開頭<b>粗體</b>文字 <p>段落</p> 結尾<i>斜體</i></div>');
+  });
+
+  it('run 內的 inline code 走原子標記保留,句子不被切開', () => {
+    const { texts, reassemble } = segmentHtml('<div>Call <code>foo()</code> first.<p>Next</p></div>');
+    expect(texts).toEqual(['Call ⟦*0⟧ first.', 'Next']);
+    expect(reassemble(['先呼叫⟦*0⟧。', '下一步'])).toBe('<div>先呼叫 <code>foo()</code>。<p>下一步</p></div>'); // 中英交界補空格(#6)
+  });
+
+  it('容器下單獨一個 inline 元素 → 只換它的內容,元素本身不經佔位符', () => {
+    const { texts, reassemble } = segmentHtml('<div><a href="x">Link text</a><p>Para</p></div>');
+    expect(texts).toEqual(['Link text', 'Para']);
+    expect(reassemble(['連結文字', '段落'])).toBe('<div><a href="x">連結文字</a><p>段落</p></div>');
+  });
+
+  it('run 中的 script 不翻、原樣保留並切開 run', () => {
+    const { texts } = segmentHtml('<div>Before<script>var x=1</script>After<p>P</p></div>');
+    expect(texts).toEqual(['Before', 'After', 'P']);
+  });
+});
+
+describe('遺失的原子元素補回段尾(#1)', () => {
+  it('模型吃掉 ⟦*N⟧ → 圖片補回段尾,不消失', () => {
+    const { texts, reassemble } = segmentHtml('<p>Photo <img src="a.png"> of <b>the cat</b>.</p>');
+    expect(texts).toEqual(['Photo ⟦*0⟧ of ⟦1⟧the cat⟦/1⟧.']);
+    expect(reassemble(['⟦1⟧貓⟦/1⟧的照片。'])).toContain('<img src="a.png">');
+  });
+
+  it('inline code 被吃掉也補回;同一個 ⟦*N⟧ 出現兩次只放一次', () => {
+    const { reassemble } = segmentHtml('<p>Run <code>npm test</code> and <code>npm build</code> now.</p>');
+    const out = reassemble(['現在執行⟦*0⟧⟦*0⟧。']);
+    expect(out.match(/npm test/g)).toHaveLength(1);
+    expect(out).toContain('<code>npm build</code>');
+  });
+});
+
+describe('壞標記收斂與殘留剝除(#3)', () => {
+  const html = '<p>A <b>cat</b> and <i>dog</i>.</p>';
+  it.each([
+    ['加注 ⟦0 animal⟧ + 漏閉合 ⟦/0»', '一隻⟦0 animal⟧貓⟦/0»和⟦1⟧狗⟦/1⟧。'],
+    ['替代括號 ❰❱', '一隻❰0❱貓❰/0❱和⟦1⟧狗⟦/1⟧。'],
+    ['全形數字與斜線', '一隻⟦０⟧貓⟦／０⟧和⟦1⟧狗⟦/1⟧。'],
+    ['標記內空白', '一隻⟦ 0 ⟧貓⟦/0 ⟧和⟦1⟧狗⟦/1⟧。'],
+  ])('%s → 還原成正確元素', (_, t) => {
+    expect(segmentHtml(html).reassemble([t])).toBe('<p>一隻<b>貓</b>和<i>狗</i>。</p>');
+  });
+
+  it('超界索引 / 落單碎片不顯示在譯文', () => {
+    const out = segmentHtml(html).reassemble(['一隻⟦0⟧貓⟦/0⟧和⟦1⟧狗⟦/1⟧⟦*9⟧⟦7⟧。⟦']);
+    expect(out).toBe('<p>一隻<b>貓</b>和<i>狗</i>。</p>');
+  });
+});
+
+describe('半殘配對與重複標記(#4 #5)', () => {
+  const html = '<p>Read <a href="x">the docs</a> now.</p>';
+  it('有關無開 → 往回補開標記,連結不消失', () => {
+    expect(segmentHtml(html).reassemble(['現在就讀⟦/0⟧。'])).toBe('<p><a href="x">現在就讀</a>。</p>');
+  });
+  it('有開無關 → 在子句邊界前補關標記', () => {
+    expect(segmentHtml(html).reassemble(['現在讀⟦0⟧文件。之後再說'])).toBe('<p>現在讀<a href="x">文件</a>。之後再說</p>');
+  });
+  it('同一配對標記出現兩次 → 只留有內容的那個', () => {
+    expect(segmentHtml(html).reassemble(['⟦0⟧⟦/0⟧現在讀⟦0⟧文件⟦/0⟧。'])).toBe('<p>現在讀<a href="x">文件</a>。</p>');
+  });
+});
+
+describe('CJK 空白收斂與中英交界補空格(#6)', () => {
+  it('中文與標記之間的幻覺空白移除', () => {
+    const { reassemble } = segmentHtml('<p>A <b>cat</b> sat.</p>');
+    expect(reassemble(['一隻 ⟦0⟧ 貓 ⟦/0⟧ 坐著。'])).toBe('<p>一隻<b>貓</b>坐著。</p>');
+  });
+  it('中文緊貼拉丁開頭的元素 → 補一格;中英之間原有空格不動', () => {
+    const { reassemble } = segmentHtml('<p>Use <a href="x">Apple</a> today.</p>');
+    expect(reassemble(['今天使用⟦0⟧Apple⟦/0⟧吧。'])).toBe('<p>今天使用 <a href="x">Apple</a>吧。</p>');
+    expect(segmentHtml('<p>Use <a href="x">Apple</a> today.</p>').reassemble(['今天使用 ⟦0⟧Apple⟦/0⟧ 吧。']))
+      .toBe('<p>今天使用 <a href="x">Apple</a> 吧。</p>');
+  });
+});
