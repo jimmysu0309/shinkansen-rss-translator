@@ -195,3 +195,32 @@ describe('整份 HTML 文件(email 電子報)', () => {
     expect(texts).toEqual(['Body']);
   });
 });
+
+describe('原始碼硬換行(2026-11-04 Daring Fireball 引文譯文夾字面 \\n)', () => {
+  const html = '<blockquote><p>On Monday, Apple reported <a href="x">record results</a>,\nwith revenue of $114.5 billion.\niPhone revenue grew 17.5%.</p></blockquote>';
+
+  it('文字節點的換行壓成空格,送翻文字不含 \\n(不觸發引擎段內換行規則)', () => {
+    const { texts } = segmentHtml(html);
+    expect(texts).toEqual(['On Monday, Apple reported ⟦0⟧record results⟦/0⟧, with revenue of $114.5 billion. iPhone revenue grew 17.5%.']);
+    expect(texts[0]).not.toContain('\n');
+  });
+
+  it('<br> 仍走原子標記保留', () => {
+    const { texts, reassemble } = segmentHtml('<p>Line one\n<br>\nLine two</p>');
+    expect(texts).toEqual(['Line one ⟦*0⟧ Line two']);
+    expect(reassemble(['第一行⟦*0⟧第二行'])).toBe('<p>第一行<br>第二行</p>');
+  });
+
+  it('防禦層:譯文吐字面 \\n(原文沒有)→ 換成空格', () => {
+    const { reassemble } = segmentHtml(html);
+    const out = reassemble(['週一，Apple 發表了⟦0⟧創紀錄財報⟦/0⟧，\\n總營收達 1145 億美元。\\niPhone 營收成長 17.5%。']);
+    expect(out).not.toContain('\\n');
+    expect(out).toBe('<blockquote><p>週一，Apple 發表了<a href="x">創紀錄財報</a>， 總營收達 1145 億美元。 iPhone 營收成長 17.5%。</p></blockquote>');
+  });
+
+  it('原文本身有字面 \\n(例如講跳脫字元)→ 譯文的 \\n 不動', () => {
+    const { texts, reassemble } = segmentHtml('<p>Use \\n for newline</p>');
+    expect(texts).toEqual(['Use \\n for newline']);
+    expect(reassemble(['用 \\n 表示換行'])).toBe('<p>用 \\n 表示換行</p>');
+  });
+});

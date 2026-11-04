@@ -66,6 +66,14 @@ const CLOSE = (n) => `⟦/${n}⟧`;      // ⟦/N⟧
 const ATOM = (n) => `⟦*${n}⟧`;       // ⟦*N⟧
 const MARKER_RE = /⟦(\/)?(\*)?(\d+)⟧/g;
 
+// 原始碼空白(含硬換行)瀏覽器顯示時本就壓成一個空格;PRE 在 SKIP_TAGS、<br> 走原子標記,
+// 所以文字節點裡的 \n 一律是排版用空白。不壓的話會觸發引擎「段內換行保留」規則,
+// Gemini 會吐字面 \n(2026-11-04 Daring Fireball 引文)。對齊上游 content-serialize 的 /\s+/ collapse。
+function collapseWs(s) { return String(s).replace(/\s+/g, ' '); }
+// 防禦層:模型仍吐字面 \n(反斜線 + n)且原文沒有時,換成空格(上游 v1.4.6 同類修正)
+function stripLiteralNewlines(t, src) {
+  return (t.includes('\\n') && !src.includes('\\n')) ? t.replace(/\\n/g, ' ') : t;
+}
 function hasTranslatable(s) { return !!s && /[\p{L}\p{N}]/u.test(s); }
 function isBlock(el) { return BLOCK_TAGS.has(el.tagName); }
 function isAtomic(el) { return ATOMIC_TAGS.has(el.tagName); }
@@ -92,7 +100,7 @@ function serializeInline(el) {
   const walk = (parent) => {
     for (const node of parent.childNodes) {
       if (node.nodeType === TEXT_NODE) {
-        s += node.nodeValue;
+        s += collapseWs(node.nodeValue);
       } else if (node.nodeType === ELEMENT_NODE) {
         // 段內 inline 的 translate="no" / notranslate 整顆保留為 ⟦*N⟧ 不送翻(人名、代碼、icon 名)
         if (SKIP_TAGS.has(node.tagName) || isAtomic(node) || isNoTranslateMarked(node)) {
@@ -222,10 +230,10 @@ export function segmentHtml(html, opts = {}) {
       const raw = u.node.nodeValue;
       const lead = raw.match(/^\s*/)[0];
       const trail = raw.match(/\s*$/)[0];
-      return { u, text: raw.slice(lead.length, raw.length - trail.length), lead, trail };
+      return { u, text: collapseWs(raw.slice(lead.length, raw.length - trail.length)), lead, trail };
     }
     const { text, markers } = serializeInline(u.node);
-    return { u, text, markers };
+    return { u, text: text.trim(), markers };
   })
     // 去掉佔位符後沒有可翻文字的單位(整段只剩 ⟦*N⟧,例如段落裡只有 <code> 或 notranslate 的人名)
     // 不送翻:省 token,也避免 LLM 對「只有標記」的輸入亂補字
@@ -241,7 +249,7 @@ export function segmentHtml(html, opts = {}) {
     for (let i = 0; i < prepared.length; i++) {
       const p = prepared[i];
       const t = translations[i];
-      const val = (t === undefined || t === null || t === '') ? p.text : t; // 空譯文保留原文
+      const val = (t === undefined || t === null || t === '') ? p.text : stripLiteralNewlines(t, p.text); // 空譯文保留原文
       if (p.u.kind === 'text') {
         p.u.node.nodeValue = p.lead + val + p.trail;
       } else {
