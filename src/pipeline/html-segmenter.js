@@ -16,6 +16,7 @@
 //   ✓ 防禦式回填(移植上游 content-serialize 修復鏈):壞標記收斂(❰❱ / ⟦0 drug⟧ / ⟦/2» / 全形數字)、
 //     半殘配對補標記、重複標記去重、遺失的原子元素(圖片 / hr / code)補回段尾、殘留標記剝除、
 //     CJK 標記旁幻覺空白收斂與中英交界補空格;單一段落壞掉不影響其他段落
+//   ✓ 模型幻覺的字面 \n / HTML 標籤字面(原文沒有的)剝除,不讓「</sub>」顯示在譯文
 //   ✗ 不驗:真實翻譯品質(整合測試 translateEntry 驗)
 //
 // 歷史:v1 用「文字節點層級」切段(結構安全但句子被 inline 切碎);此版換 block+佔位符提升語序品質。
@@ -75,6 +76,21 @@ function collapseWs(s) { return String(s).replace(/\s+/g, ' '); }
 // 防禦層:模型仍吐字面 \n(反斜線 + n)且原文沒有時,換成空格(上游 v1.4.6 同類修正)
 function stripLiteralNewlines(t, src) {
   return (t.includes('\\n') && !src.includes('\\n')) ? t.replace(/\\n/g, ' ') : t;
+}
+// 防禦層:模型幻覺出 HTML 標籤字面(原文沒有)→ 剝掉。2026-11-07 The Atlantic〈A Monster of His Time〉:
+// 「《⟦1⟧A Clockwork Orange⟦/1⟧》」譯成「《⟦1</sub>發條橘子⟦/1</sub>》」(或 ⟦1⟧</sub>…),
+// 回填把 </sub> 當文字 escape,頁面直接顯示「</sub>」。必須在佔位符收斂之前處理:
+// 緊接未閉合標記(⟦1</sub>)的幻覺標籤是被拿來當 ⟧ 用,換成 ⟧;
+// 不能單純剝掉,否則剩下的「⟦/1》」會被 RE_NORM_MANGLED_CLOSE_G 當成 》 代替 ⟧,吃掉書名號。
+// 原文本身含該標籤字面(文章在講 HTML,&lt;sub&gt; 解碼後進送翻文字)則保留不動。
+const RE_TAG_LITERAL_G = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>/g;
+const RE_OPEN_MARKER_TAIL = /⟦\*?\/?\d+$/;
+function stripHallucinatedTags(t, src) {
+  if (!t.includes('<')) return t;
+  return t.replace(RE_TAG_LITERAL_G, (m, off, s) => {
+    if (src.includes(m)) return m;
+    return RE_OPEN_MARKER_TAIL.test(s.slice(Math.max(0, off - 12), off)) ? '⟧' : '';
+  });
 }
 function hasTranslatable(s) { return !!s && /[\p{L}\p{N}]/u.test(s); }
 function isBlock(el) { return BLOCK_TAGS.has(el.tagName); }
@@ -496,7 +512,7 @@ export function segmentHtml(html, opts = {}) {
     for (let i = 0; i < prepared.length; i++) {
       const p = prepared[i];
       const t = translations[i];
-      const val = (t === undefined || t === null || t === '') ? p.text : stripLiteralNewlines(t, p.text); // 空譯文保留原文
+      const val = (t === undefined || t === null || t === '') ? p.text : stripHallucinatedTags(stripLiteralNewlines(t, p.text), p.text); // 空譯文保留原文
       if (p.u.kind === 'block') {
         const el = p.u.node;
         while (el.firstChild) el.removeChild(el.firstChild);

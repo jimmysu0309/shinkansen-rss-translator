@@ -225,6 +225,37 @@ describe('原始碼硬換行(2026-11-04 Daring Fireball 引文譯文夾字面 \\
   });
 });
 
+describe('模型幻覺 HTML 標籤字面(2026-11-07 The Atlantic 譯文夾 </sub>)', () => {
+  const html = '<p>In <em>My Booky Wook</em> (after <em>A Clockwork Orange</em>), Brand.</p>';
+  const want = '<p>在《<em>My Booky Wook</em>》（取自《<em>發條橘子</em>》），Brand。</p>';
+
+  it('</sub> 取代 ⟧(⟦1</sub>)→ 剝掉後收斂回正確標記', () => {
+    const { reassemble } = segmentHtml(html);
+    expect(reassemble(['在《⟦0⟧My Booky Wook⟦/0⟧》（取自《⟦1</sub>發條橘子⟦/1</sub>》），Brand。'])).toBe(want);
+  });
+
+  it('</sub> 夾在完整標記後(⟦1⟧</sub>)→ 剝掉', () => {
+    const { reassemble } = segmentHtml(html);
+    expect(reassemble(['在《⟦0⟧My Booky Wook⟦/0⟧》（取自《⟦1⟧</sub>發條橘子⟦/1⟧</sub>》），Brand。'])).toBe(want);
+  });
+
+  it('帶屬性 / 自閉合的標籤字面也剝', () => {
+    const { reassemble } = segmentHtml('<p>Hello world.</p>');
+    expect(reassemble(['你好<span class="x">世界</span><br/>。'])).toBe('<p>你好世界。</p>');
+  });
+
+  it('原文本身有該標籤字面(文章在講 HTML)→ 保留(escape 後顯示)', () => {
+    const { texts, reassemble } = segmentHtml('<p>Use &lt;sub&gt; for subscripts.</p>');
+    expect(texts).toEqual(['Use <sub> for subscripts.']);
+    expect(reassemble(['用 <sub> 標示下標。'])).toBe('<p>用 &lt;sub&gt; 標示下標。</p>');
+  });
+
+  it('數學比較符號不誤剝', () => {
+    const { reassemble } = segmentHtml('<p>If a < b and c > d.</p>');
+    expect(reassemble(['若 a < b 且 c > d。'])).toBe('<p>若 a &lt; b 且 c &gt; d。</p>');
+  });
+});
+
 // 2026-11-04 對照上游 content-serialize / content-detect 補齊的防禦(1~6)
 describe('混合內容:區塊之間的文字 + inline 合成一段(#2)', () => {
   it('<li> 直屬文字 + 連結 + 子清單 → 句子一段、子清單另一段', () => {
