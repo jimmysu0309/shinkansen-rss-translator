@@ -35,12 +35,33 @@ export function extractReadable(html, url) {
     const { document } = parseHTML(html);
     // og:image 必須在 Readability.parse() 之前讀——parse 會就地改寫 document
     ogImage = readOgImage(document, url);
+    stripHidden(document);
     article = new Readability(document).parse();
   } catch {
     return null;
   }
   if (!article || !article.content) return null;
   return maybePrependHero(dedupeExtracted(absolutizeUrls(article.content, url)), ogImage);
+}
+
+/**
+ * 隱藏元素先拔(通則):Readability 會把 div 裡連續的行內內容包成 <p>,遇到區塊元素就斷段;
+ * 隱藏元素它最後也會丟,但那時段落已經被切開了。The Verge 作者介紹是
+ * `<span>作者名</span><aside aria-hidden="true">追蹤彈窗</aside><span>is a news writer…</span>`,
+ * 結果變成「作者名」「是一位…」兩段,譯文斷句(2026-11-07)。
+ * 規則與 Readability 的 _isProbablyVisible 一致(hidden 屬性 / aria-hidden=true / inline
+ * display:none、visibility:hidden),只是提前做;保留 .fallback-image(Readability 也放行)。
+ */
+function stripHidden(document) {
+  for (const el of [...document.querySelectorAll('[hidden], [aria-hidden="true"], [style]')]) {
+    if (!el.isConnected) continue;
+    if (el.classList.contains('fallback-image')) continue;
+    const style = (el.getAttribute('style') || '').replace(/\s+/g, '').toLowerCase();
+    if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true' ||
+        style.includes('display:none') || style.includes('visibility:hidden')) {
+      el.remove();
+    }
+  }
 }
 
 /**

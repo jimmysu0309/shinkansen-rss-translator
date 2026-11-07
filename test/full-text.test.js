@@ -245,3 +245,19 @@ describe('Readability 重複抽取去重', () => {
     expect(out.match(/短句重複/g).length).toBe(2);
   });
 });
+
+describe('隱藏元素先拔(避免切斷段落)', () => {
+  it('The Verge 作者介紹:中間夾隱藏 aside → 作者名與描述留在同一段', () => {
+    const page = `<!DOCTYPE html><html><body><article>
+      <div><span role="button"><span>Stevie Bonifield</span></span>
+        <aside aria-hidden="true" style="visibility:hidden"><div>Stevie Bonifield</div><p>Posts from this author will be added to your daily email digest.</p></aside>
+        <span>is a news writer covering all things consumer tech.</span></div>
+      <p>正文第一段,內容夠長,readability 才會保留下來當作正文的一部分,不會被丟掉。</p>
+      <p>正文第二段也要夠長才會被保留下來,再多寫一點字數充版面確保抽得出正文喔。</p>
+    </article></body></html>`;
+    const out = extractReadable(page, 'https://ex.com/a');
+    expect(out).toMatch(/<p>[^]*Stevie Bonifield[^]*is a news writer[^]*?<\/p>/);
+    expect(out).not.toMatch(/Stevie Bonifield<\/span><\/span>\s*<\/p>/);
+    expect(out).not.toContain('daily email digest');
+  });
+});
