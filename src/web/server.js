@@ -22,6 +22,7 @@ import {
 } from '../engine.js';
 import { costForUsage, MODEL_PRICING } from '../pricing.js';
 import { feedsToOpml, parseOpml } from '../pipeline/opml.js';
+import { normalizeExcludeCategories } from '../pipeline/category-filter.js';
 import { APP_VERSION } from '../version.js';
 
 export { APP_VERSION }; // 沿用舊匯出點(版本號單一資料源已移到 src/version.js)
@@ -285,7 +286,7 @@ export function buildServer(ctx, opts = {}) {
   // ─── 完整備份(設定 + feeds)───
   // 只備份使用者設定欄位,不含抓取狀態(etag / last_* / id)與 apiKey。
   const FEED_BACKUP_FIELDS = ['source_url', 'title', 'enabled', 'engine', 'model',
-    'service_tier', 'fetch_article', 'target_language', 'system_prompt', 'max_entries'];
+    'service_tier', 'fetch_article', 'target_language', 'system_prompt', 'max_entries', 'exclude_categories'];
 
   app.get('/api/backup/export', async (req, reply) => {
     reply.header('content-disposition', 'attachment; filename="shinkansen-feed-backup.json"');
@@ -319,6 +320,7 @@ export function buildServer(ctx, opts = {}) {
         const m = normalizeMaxEntries(patch.max_entries);
         if (m === undefined) delete patch.max_entries; else patch.max_entries = m;
       }
+      if ('exclude_categories' in patch) patch.exclude_categories = normalizeExcludeCategories(patch.exclude_categories);
       const existing = ctx.feeds.getByUrl(f.source_url);
       if (existing) { ctx.feeds.update(existing.id, patch); updated++; }
       else { ctx.feeds.create({ ...patch, engine: engineOrDefault(patch.engine) }); added++; }
@@ -379,7 +381,10 @@ export function buildServer(ctx, opts = {}) {
     if (ctx.feeds.getByUrl(body.source_url)) return reply.code(409).send({ error: '此 feed 已存在' });
     const maxEntries = normalizeMaxEntries(body.max_entries);
     if (maxEntries === undefined) return reply.code(400).send({ error: MAX_ENTRIES_ERROR });
-    return reply.code(201).send(ctx.feeds.create({ ...body, max_entries: maxEntries, engine: engineOrDefault(body.engine) }));
+    return reply.code(201).send(ctx.feeds.create({
+      ...body, max_entries: maxEntries, engine: engineOrDefault(body.engine),
+      exclude_categories: normalizeExcludeCategories(body.exclude_categories),
+    }));
   });
   app.patch('/api/feeds/:id', async (req, reply) => {
     const body = req.body || {};
@@ -398,6 +403,7 @@ export function buildServer(ctx, opts = {}) {
       if (maxEntries === undefined) return reply.code(400).send({ error: MAX_ENTRIES_ERROR });
       body.max_entries = maxEntries;
     }
+    if ('exclude_categories' in body) body.exclude_categories = normalizeExcludeCategories(body.exclude_categories);
     const f = ctx.feeds.update(Number(req.params.id), body);
     if (!f) return reply.code(404).send({ error: 'feed 不存在' });
     return f;

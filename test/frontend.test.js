@@ -450,3 +450,26 @@ describe('前端:背景刷新輪詢', () => {
     expect(document.querySelector('#toast').textContent).toContain('翻譯 2 篇');
   }, 8000);
 });
+
+describe('前端:排除分類', () => {
+  beforeEach(boot);
+  // 驗表單渲染與送出的 patch 形狀。不驗後端正規化(web.test.js)
+
+  it('沒設定 → 欄位空白、不出徽章;儲存送 null;填值 → 原樣送出(正規化在後端)', async () => {
+    const card = document.querySelector('#feed-list .feed-item[data-id="1"]');
+    const input = card.querySelector('[data-f="exclude_categories"]');
+    expect(input.value).toBe('');
+    expect(card.querySelector('.feed-meta').textContent).not.toContain('排除分類');
+    const save = async (raw) => {
+      global.fetch.mockClear();
+      const c = document.querySelector('#feed-list .feed-item[data-id="1"]'); // 每次重查:儲存後 loadFeeds 會重繪卡片
+      c.querySelector('[data-f="exclude_categories"]').value = raw;
+      c.querySelector('[data-act="save"]').click();
+      await new Promise((r) => setTimeout(r, 30));
+      const call = global.fetch.mock.calls.find((c) => c[1]?.method === 'PATCH');
+      return JSON.parse(call[1].body).exclude_categories;
+    };
+    expect(await save('  ')).toBeNull();
+    expect(await save('Installer, The Stepback')).toBe('Installer, The Stepback');
+  });
+});

@@ -3,7 +3,7 @@
 // parseFeedXml(xml) 是純函式(可離線測);fetchFeed(url, opts) 加上網路與 304 處理。
 //
 // 訊號層次:
-//   ✓ parseFeedXml:把各種 feed 格式正規化成統一 item 形狀(guid/title/url/author/contentHtml/published_at)
+//   ✓ parseFeedXml:把各種 feed 格式正規化成統一 item 形狀(guid/title/url/author/contentHtml/published_at/categories)
 //   ✓ fetchFeed:304 Not Modified → 不重抓;回傳新的 etag/last-modified
 //   ✗ 不驗:真實網路(整合/部署階段驗);單元測試用注入的 fetch
 
@@ -21,6 +21,8 @@ const parser = new Parser({
       ['content:encoded', 'contentEncoded'],
       ['media:content', 'mediaContent', { keepArray: true }],
       ['media:thumbnail', 'mediaThumbnail', { keepArray: true }],
+      // rss-parser 只解 RSS 的 <category>,Atom 的 <category term="…"/> 不解 → 自己撈
+      ['category', 'categoryRaw', { keepArray: true }],
     ],
   },
 });
@@ -75,6 +77,22 @@ function pickImage(item) {
   return null;
 }
 
+// 分類:RSS <category>文字</category>(可能帶 domain 屬性 → {_: 文字})、
+// Atom <category term="…"/>(→ {$: {term}})。統一成字串陣列,供 feeds.exclude_categories 比對。
+function pickCategories(item) {
+  const raw = [];
+  for (const v of [item.categories, item.categoryRaw]) {
+    if (Array.isArray(v)) raw.push(...v);
+    else if (v) raw.push(v);
+  }
+  const out = [];
+  for (const c of raw) {
+    const s = typeof c === 'string' ? c : (c && (c.$?.term ?? c.$?.label ?? c._));
+    if (typeof s === 'string' && s.trim() && !out.includes(s.trim())) out.push(s.trim());
+  }
+  return out;
+}
+
 function normalizeItem(item) {
   return {
     guid: item.guid || item.id || item.link || null,
@@ -84,6 +102,7 @@ function normalizeItem(item) {
     contentHtml: pickContentHtml(item),
     image_url: pickImage(item),
     published_at: toEpoch(item),
+    categories: pickCategories(item),
   };
 }
 

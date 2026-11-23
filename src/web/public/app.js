@@ -328,6 +328,7 @@ async function loadFeedsInner() {
         ${f.engine !== 'google' && f.engine !== 'opencc' ? `<span>模型:${f.model ? esc(f.model) : '繼承全域'}</span>` : ''}
         ${f.fetch_article ? '<span>全文抓取</span>' : ''}
         ${f.max_entries != null ? `<span>上限:${f.max_entries === 0 ? '不限制' : f.max_entries + ' 篇'}</span>` : ''}
+        ${f.exclude_categories ? `<span title="分類符合的文章不入庫、不翻譯">排除分類:${esc(f.exclude_categories)}</span>` : ''}
         ${f.last_error ? `<span class="badge error">抓取錯誤</span>` : ''}
       </div>
 
@@ -341,6 +342,9 @@ async function loadFeedsInner() {
           <label>Gemini 模型<select data-f="model">${optionsHtml(DEFAULTS.models, f.model)}</select></label>
           <label>文章上限<small class="hint-inline"><strong>空白</strong> = 繼承全域・<strong>0</strong> = 不限制</small>
             <input type="number" data-f="max_entries" min="0" max="10000" step="10" value="${f.max_entries ?? ''}" placeholder="繼承全域(${esc(globalMaxEntries())})">
+          </label>
+          <label class="span2">排除分類<small class="hint-inline">逗號分隔・文章分類完全相符（不分大小寫）就<strong>不入庫、不翻譯</strong>・舊文章不追溯</small>
+            <input type="text" data-f="exclude_categories" value="${esc(f.exclude_categories || '')}" placeholder="例：Installer, The Stepback">
           </label>
         </div>
         <div class="edit-row">
@@ -434,6 +438,7 @@ $('#feed-list').addEventListener('click', async (e) => {
         model: val('model').value || null,    // model 可為 null = 繼承全域
         fetch_article: val('fetch_article').checked,
         max_entries: parseMaxEntries(val('max_entries').value), // 空白 → null = 繼承全域
+        exclude_categories: val('exclude_categories').value.trim() || null, // 正規化在後端
         // enabled 不在這裡:卡片右上的 toggle 是唯一入口(單一資料源)
       };
       await api('PATCH', `/api/feeds/${id}`, patch);

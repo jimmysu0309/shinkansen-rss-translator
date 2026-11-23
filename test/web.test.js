@@ -221,6 +221,20 @@ describe('feeds API', () => {
     expect((await app.inject({ method: 'GET', url: '/api/feeds' })).json()).toHaveLength(0);
   });
 
+  it('exclude_categories:POST / PATCH 正規化;空白 = null(不排除);備份匯出入帶得過去', async () => {
+    // 驗 API 層正規化與備份欄位。不驗 pipeline 採用(category-filter.test.js)與表單(frontend.test.js)
+    const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', exclude_categories: ' Installer ,The Stepback,,' } })).json();
+    expect(f.exclude_categories).toBe('Installer, The Stepback');
+    const patch = (payload) => app.inject({ method: 'PATCH', url: `/api/feeds/${f.id}`, payload });
+    expect((await patch({ exclude_categories: '   ' })).json().exclude_categories).toBeNull();
+    expect((await patch({ exclude_categories: 'Optimizer' })).json().exclude_categories).toBe('Optimizer');
+    const backup = (await app.inject({ method: 'GET', url: '/api/backup/export' })).json();
+    expect(backup.feeds[0].exclude_categories).toBe('Optimizer');
+    await patch({ exclude_categories: null });
+    await app.inject({ method: 'POST', url: '/api/backup/import', payload: backup });
+    expect((await app.inject({ method: 'GET', url: `/api/feeds/${f.id}` })).json().exclude_categories).toBe('Optimizer');
+  });
+
   it('max_entries:POST / PATCH 可設定;空字串與 null = 繼承;非法值 400 不落庫', async () => {
     // 驗 API 層正規化 + 範圍。不驗 pipeline 採用(pipeline.test.js)與表單送出的形狀(frontend.test.js)
     const f = (await app.inject({ method: 'POST', url: '/api/feeds', payload: { source_url: 'https://ex.com/feed', max_entries: 1000 } })).json();

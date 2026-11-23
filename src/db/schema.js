@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS feeds (
   target_language    TEXT,                             -- null = 用全域預設
   system_prompt      TEXT,                             -- 逐 feed 覆寫;null = 用全域
   max_entries        INTEGER,                          -- 逐 feed 文章上限;null = 用全域 maxEntriesPerFeed,0 = 不限制
+  exclude_categories TEXT,                             -- 逗號分隔;文章分類命中任一即不入庫(不翻譯);null = 不排除
   -- 抓取狀態(conditional GET)
   etag               TEXT,
   last_modified      TEXT,

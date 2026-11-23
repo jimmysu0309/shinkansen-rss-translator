@@ -11,6 +11,7 @@
 //   ✓ 翻譯失敗:退避後自動重試 → 上限 MAX_TRANSLATE_ATTEMPTS 次後留在 error 等人工
 //   ✗ 不驗:真實網路 / 真實 Gemini(用注入的 fake;真實走整合測試 / 部署)
 
+import { matchExcludedCategory } from './category-filter.js';
 import { fetchFeed as defaultFetchFeed } from './fetch-feed.js';
 import { translateEntry as defaultTranslateEntry } from './translate-entry.js';
 import { fetchFullText as defaultFetchFullText } from './full-text.js';
@@ -172,19 +173,21 @@ async function processFeedLocked(ctx, feed, deps) {
   // 2. upsert(依 guid 去重),只有新條目會被建立。
   //    注意:即使 304(未更新)也要往下翻 pending —— 之前失敗 / 未翻的 backlog 必須清掉,
   //    不能因為來源沒新內容就卡住(否則 reset 成 pending 的舊文章永遠補不到)。
-  let added = 0;
+  let added = 0, excluded = 0;
   if (res.notModified) {
     log('info', 'fetch', `${feed.title || feed.source_url}:未更新(304),檢查待翻 backlog`);
   } else {
     for (const it of res.items) {
       if (!it.guid) continue; // 沒 guid 無法去重,跳過(避免每次重抓都重複)
+      // 依分類排除(feeds.exclude_categories):入庫前丟掉 → 不翻譯、不輸出。已入庫的舊文章不追溯。
+      if (matchExcludedCategory(it.categories, feed.exclude_categories)) { excluded++; continue; }
       const { inserted } = ctx.entries.upsertNew({
         feed_id: feed.id, guid: it.guid, url: it.url, title: it.title, author: it.author,
         image_url: it.image_url, content_html: it.contentHtml, published_at: it.published_at,
       }, now());
       if (inserted) added++;
     }
-    log('info', 'fetch', `${feed.title || feed.source_url}:抓取 ${res.items.length} 篇,新增 ${added} 篇`);
+    log('info', 'fetch', `${feed.title || feed.source_url}:抓取 ${res.items.length} 篇,新增 ${added} 篇${excluded ? `,依分類排除 ${excluded} 篇` : ''}`);
   }
 
   // 2.5 補抓上次全文失敗的文章(不論 304 與否都跑)。

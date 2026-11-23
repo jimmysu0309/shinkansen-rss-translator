@@ -56,6 +56,9 @@ function migrate(db) {
   if (!feedCols.has('max_entries')) {
     db.exec('ALTER TABLE feeds ADD COLUMN max_entries INTEGER');
   }
+  if (!feedCols.has('exclude_categories')) {
+    db.exec('ALTER TABLE feeds ADD COLUMN exclude_categories TEXT');
+  }
   migrateRetiredModels(db);
 }
 
@@ -109,9 +112,9 @@ function makeSettingsDao(db) {
 function makeFeedsDao(db) {
   const insert = db.prepare(`
     INSERT INTO feeds (source_url, title, enabled, engine, model, service_tier,
-                       fetch_article, target_language, system_prompt, max_entries, created_at)
+                       fetch_article, target_language, system_prompt, max_entries, exclude_categories, created_at)
     VALUES (@source_url, @title, @enabled, @engine, @model, @service_tier,
-            @fetch_article, @target_language, @system_prompt, @max_entries, @created_at)
+            @fetch_article, @target_language, @system_prompt, @max_entries, @exclude_categories, @created_at)
   `);
   const byId = db.prepare('SELECT * FROM feeds WHERE id = ?');
   const byUrl = db.prepare('SELECT * FROM feeds WHERE source_url = ?');
@@ -125,7 +128,7 @@ function makeFeedsDao(db) {
   `);
 
   const FIELDS = ['source_url', 'title', 'enabled', 'engine', 'model', 'service_tier',
-    'fetch_article', 'target_language', 'system_prompt', 'max_entries'];
+    'fetch_article', 'target_language', 'system_prompt', 'max_entries', 'exclude_categories'];
 
   return {
     create(feed, now) {
@@ -141,6 +144,7 @@ function makeFeedsDao(db) {
         target_language: feed.target_language ?? null,
         system_prompt: feed.system_prompt ?? null,
         max_entries: feed.max_entries ?? null,
+        exclude_categories: feed.exclude_categories ?? null,
         created_at: at,
       };
       const info = insert.run(row);

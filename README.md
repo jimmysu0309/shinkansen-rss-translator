@@ -29,6 +29,7 @@
 - **全文抓取**：RSS 只給摘要的 feed，可逐 feed 開啟「抓取全文」（Readability 抽正文、相對網址轉絕對）再翻譯。單次逾時 45 秒，逾時 / 5xx / 429 會退避 2 秒重試一次；仍抓不到就先用摘要翻出去（不卡住閱讀），**之後每次刷新自動補抓**，成功即覆蓋原文重譯，累計 3 次失敗才放棄。
 - **保留封面圖**：很多來源（The Atlantic、多數 WordPress 站）把封面掛在文章本體外的 `media:content` / `media:thumbnail` / `enclosure`，內文一張圖都沒有。這些圖會被撈進 `image_url`，輸出時前置成 hero（內文已有同圖、或開頭就有圖的圖輯類文章則不重複加），下游閱讀器與稍後讀服務都拿得到圖。
 - **電子報原文連結**：email 轉成的 feed（如 LetterFeed）每篇沒有網址時，從信件內容認出網站上的原文網址當 `<link>`（目前認得 Substack，個人 token 一律去掉），閱讀器按「開原文」能直接開；認不得的才退回「來源 feed 網址 + #guid」。
+- **依分類排除文章**：綜合 feed 裡混有另外單獨訂閱的子專欄時（例：The Verge 主 feed 內含 Installer / The Stepback / Optimizer 電子報），在編輯面板「**排除分類**」填分類名（逗號分隔），RSS / Atom 的 `<category>` 完全相符（不分大小寫）的文章**入庫前就丟掉**——不翻譯、不燒 token、輸出也不會出現。已入庫的舊文章不追溯。
 - **排程**：cron 定期自動處理所有啟用中的 feed。
 - **conditional GET**：etag / last-modified，未更新不重抓；XML 解析失敗（上游偶發截斷回應）自動隔 3 秒重抓一次。
 - **登入密碼**：`.env` 設 `AUTH_PASSWORD` 即啟用（Basic Auth，含防暴力嘗試鎖定）；譯後 RSS 保持免認證。
@@ -64,7 +65,7 @@ src/
   server.js            進入點（開 DB、載 .env、排程、listen）
 deploy/extra-ca.pem    額外信任的根憑證（compose 以 NODE_EXTRA_CA_CERTS 掛入）
 vendor/shinkansen/     Shinkansen 引擎（git submodule）
-test/                  vitest(353 tests)
+test/                  vitest(364 tests)
 ```
 
 ---
@@ -174,7 +175,7 @@ http://shinkansen-rss:8088/rss/<feedId>
 
 - **新增 feed**：Feeds 分頁貼網址 →（可先按「測試」確認抓得到）→「新增 Feed」。
 - **翻譯**：按 feed 卡片「刷新」，或等排程自動跑（頻率在設定頁調）。
-- **編輯 feed**：卡片「編輯」可改**來源網址**（換網址自動清 etag 快取）/ 標題 / 引擎 / 模型 / 文章上限 / 抓全文（不做分類——feed 分類請在 Miniflux 匯入後自行整理）。
+- **編輯 feed**：卡片「編輯」可改**來源網址**（換網址自動清 etag 快取）/ 標題 / 引擎 / 模型 / 文章上限 / 排除分類 / 抓全文（不做分類——feed 分類請在 Miniflux 匯入後自行整理）。
 - **啟用 / 停用**：卡片右上的開關一鍵停用（排程略過、卡片變淡；RSS 輸出仍可讀）／重新啟用。
 - **逐 feed 覆寫**：新增或編輯時可指定引擎 / 模型 / 是否抓全文；編輯面板另可設該 feed 的**文章上限**（空白 = 繼承全域，**0** = 不限制）——「精選 / best-of」這類會反覆列出舊文章的 feed 建議調高。
 - **查失敗原因**：點卡片上的「**N 失敗**」badge 展開失敗清單（日期、標題連回原文、完整錯誤訊息）；每條下方顯示自動重試狀態（「已失敗 2/5 次，稍後自動重試」）；每條可「**清除**」放棄翻譯（該篇 RSS 改出原文、不再重試）。
